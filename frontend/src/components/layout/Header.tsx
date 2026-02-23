@@ -10,7 +10,7 @@ export function Header() {
 
   return (
     <header className="border-b border-[var(--border)] bg-[var(--card)]">
-      <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between gap-4">
+      <div className="px-8 h-14 flex items-center justify-between gap-4">
         <Link to="/" className="flex items-center gap-2 font-bold text-lg shrink-0">
           <TrendingUp className="w-5 h-5 text-[var(--accent)]" />
           Investron
