@@ -1,0 +1,4 @@
+# Prevent Claude Code from reading sensitive files
+.env
+.env.local
+.env.production

@@ -1,0 +1,76 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: #ffffff;
+    --foreground: #0f172a;
+    --muted: #f1f5f9;
+    --muted-foreground: #64748b;
+    --border: #e2e8f0;
+    --card: #ffffff;
+    --card-foreground: #0f172a;
+    --accent: #3b82f6;
+    --accent-foreground: #ffffff;
+  }
+
+  .dark {
+    --background: #0f0f23;
+    --foreground: #e2e8f0;
+    --muted: #1a1a2e;
+    --muted-foreground: #94a3b8;
+    --border: #2d2d44;
+    --card: #1a1a2e;
+    --card-foreground: #e2e8f0;
+    --accent: #3b82f6;
+    --accent-foreground: #ffffff;
+  }
+
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  body {
+    @apply bg-[var(--background)] text-[var(--foreground)] font-sans antialiased;
+    min-height: 100vh;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-[var(--card)] text-[var(--card-foreground)] border border-[var(--border)] rounded-lg p-4 shadow-sm;
+  }
+
+  .btn-primary {
+    @apply bg-[var(--accent)] text-[var(--accent-foreground)] px-4 py-2 rounded-lg font-medium
+           hover:opacity-90 transition-opacity disabled:opacity-50 cursor-pointer;
+  }
+
+  .btn-secondary {
+    @apply bg-[var(--muted)] text-[var(--foreground)] px-4 py-2 rounded-lg font-medium
+           hover:opacity-80 transition-opacity border border-[var(--border)] cursor-pointer;
+  }
+
+  .input {
+    @apply bg-[var(--background)] text-[var(--foreground)] border border-[var(--border)] rounded-lg px-3 py-2
+           focus:outline-none focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent
+           placeholder:text-[var(--muted-foreground)];
+  }
+
+  .metric-positive {
+    @apply text-gain font-semibold;
+  }
+
+  .metric-negative {
+    @apply text-loss font-semibold;
+  }
+
+  .metric-neutral {
+    @apply text-[var(--muted-foreground)];
+  }
+}
