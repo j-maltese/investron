@@ -24,6 +24,9 @@ export function Header() {
           <Link to="/" className="px-3 py-1.5 rounded-md text-sm hover:bg-[var(--muted)] transition-colors">
             Dashboard
           </Link>
+          <Link to="/docs" className="px-3 py-1.5 rounded-md text-sm hover:bg-[var(--muted)] transition-colors">
+            Docs
+          </Link>
 
           <button
             onClick={toggleTheme}
