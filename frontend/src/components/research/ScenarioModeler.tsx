@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { api } from '@/lib/api'
+import type { ScenarioResult } from '@/lib/types'
 
 interface ScenarioModelerProps {
   ticker: string
@@ -92,7 +93,7 @@ export function ScenarioModeler({ ticker }: ScenarioModelerProps) {
       {result && (
         <div className="mt-4 space-y-3">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {result.scenarios.map((s) => (
+            {result.scenarios.map((s: { name: string; implied_value: number; probability: number }) => (
               <div key={s.name} className="p-3 rounded-lg bg-[var(--muted)]">
                 <div className="text-xs text-[var(--muted-foreground)]">{s.name} Case</div>
                 <div className="text-lg font-semibold font-mono">${s.implied_value.toFixed(2)}</div>

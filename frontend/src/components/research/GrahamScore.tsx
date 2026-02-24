@@ -1,5 +1,6 @@
 import { CheckCircle2, XCircle } from 'lucide-react'
 import { useGrahamScore } from '@/hooks/useCompany'
+import type { GrahamCriterion } from '@/lib/types'
 
 interface GrahamScoreProps {
   ticker: string
@@ -40,7 +41,7 @@ export function GrahamScore({ ticker }: GrahamScoreProps) {
       )}
 
       <div className="space-y-2">
-        {data.criteria.map((criterion) => (
+        {data.criteria.map((criterion: GrahamCriterion) => (
           <div key={criterion.name} className="flex items-start gap-2 text-sm">
             {criterion.passed ? (
               <CheckCircle2 className="w-4 h-4 text-gain shrink-0 mt-0.5" />

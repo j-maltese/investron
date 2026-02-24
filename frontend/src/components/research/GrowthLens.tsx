@@ -18,7 +18,7 @@ export function GrowthLens({ ticker }: GrowthLensProps) {
   if (isLoading) return <div className="text-[var(--muted-foreground)]">Loading growth metrics...</div>
   if (!data) return null
 
-  const revenueGrowthData = data.revenue_growth_rates.map((r) => ({
+  const revenueGrowthData = data.revenue_growth_rates.map((r: { period: string; growth_rate: number }) => ({
     period: r.period.slice(0, 4), // Just the year
     growth: +(r.growth_rate * 100).toFixed(1),
   }))
@@ -85,9 +85,9 @@ export function GrowthLens({ ticker }: GrowthLensProps) {
               <BarChart data={revenueGrowthData}>
                 <XAxis dataKey="period" tick={{ fontSize: 12 }} />
                 <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `${v}%`} />
-                <Tooltip formatter={(value: number) => [`${value}%`, 'Growth']} />
+                <Tooltip formatter={(value: number | undefined) => value != null ? [`${value}%`, 'Growth'] : ['-', 'Growth']} />
                 <Bar dataKey="growth" radius={[4, 4, 0, 0]}>
-                  {revenueGrowthData.map((entry, index) => (
+                  {revenueGrowthData.map((entry: { period: string; growth: number }, index: number) => (
                     <Cell key={index} fill={entry.growth >= 0 ? '#22c55e' : '#ef4444'} />
                   ))}
                 </Bar>

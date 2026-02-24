@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ExternalLink, FileText } from 'lucide-react'
 import { useFilings } from '@/hooks/useCompany'
+import type { Filing } from '@/lib/types'
 
 interface FilingsTabProps {
   ticker: string
@@ -42,7 +43,7 @@ export function FilingsTab({ ticker }: FilingsTabProps) {
 
       {/* Filings list */}
       <div className="space-y-2">
-        {data?.filings?.map((filing) => (
+        {data?.filings?.map((filing: Filing) => (
           <div
             key={filing.accession_number}
             className="card flex items-start justify-between gap-4 hover:bg-[var(--muted)] transition-colors"

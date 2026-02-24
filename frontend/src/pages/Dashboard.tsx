@@ -9,11 +9,6 @@ function formatCurrency(value?: number | null): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value)
 }
 
-function formatPercent(value?: number | null): string {
-  if (value == null) return 'N/A'
-  return `${value >= 0 ? '+' : ''}${(value * 100).toFixed(1)}%`
-}
-
 export function Dashboard() {
   const { data: watchlistData, isLoading: watchlistLoading } = useWatchlist()
   const { data: alertsData } = useAlerts()

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { api } from '@/lib/api'
 import { ScenarioModeler } from './ScenarioModeler'
+import type { DCFResult } from '@/lib/types'
 
 interface ValuationTabProps {
   ticker: string
@@ -98,7 +99,7 @@ export function ValuationTab({ ticker }: ValuationTabProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {dcfResult.projected_fcf.map((row) => (
+                  {dcfResult.projected_fcf.map((row: { year: number; fcf: number; present_value: number }) => (
                     <tr key={row.year} className="border-b border-[var(--border)] last:border-0">
                       <td className="py-1.5 px-2">Year {row.year}</td>
                       <td className="py-1.5 px-2 text-right font-mono">${(row.fcf / 1e9).toFixed(2)}B</td>

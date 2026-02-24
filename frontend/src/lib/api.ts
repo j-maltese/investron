@@ -1,4 +1,9 @@
 import { supabase } from './supabase'
+import type {
+  CompanySearchResult, Company, FinancialStatementsResponse, KeyMetrics,
+  GrahamScoreResponse, GrowthMetrics, FilingsResponse, DCFInput, DCFResult,
+  ScenarioModelInput, ScenarioResult, WatchlistItem, Alert,
+} from './types'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
 

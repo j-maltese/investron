@@ -1,11 +1,11 @@
 // Company
-interface CompanySearchResult {
+export interface CompanySearchResult {
   ticker: string
   name: string
   exchange?: string
 }
 
-interface Company {
+export interface Company {
   id: number
   ticker: string
   name: string
@@ -18,12 +18,12 @@ interface Company {
 }
 
 // Financial Statements
-interface FinancialStatement {
+export interface FinancialStatement {
   period: string
   [key: string]: string | number | null
 }
 
-interface FinancialStatementsResponse {
+export interface FinancialStatementsResponse {
   ticker: string
   statement_type: string
   period_type: string
@@ -31,7 +31,7 @@ interface FinancialStatementsResponse {
 }
 
 // Key Metrics
-interface KeyMetrics {
+export interface KeyMetrics {
   ticker: string
   name?: string
   price?: number
@@ -59,7 +59,7 @@ interface KeyMetrics {
 }
 
 // Graham Score
-interface GrahamCriterion {
+export interface GrahamCriterion {
   name: string
   description: string
   passed: boolean
@@ -67,7 +67,7 @@ interface GrahamCriterion {
   threshold?: string
 }
 
-interface GrahamScoreResponse {
+export interface GrahamScoreResponse {
   ticker: string
   score: number
   max_score: number
@@ -77,7 +77,7 @@ interface GrahamScoreResponse {
 }
 
 // Growth Metrics
-interface GrowthMetrics {
+export interface GrowthMetrics {
   ticker: string
   revenue_growth_rates: { period: string; growth_rate: number }[]
   cash_on_hand?: number
@@ -92,7 +92,7 @@ interface GrowthMetrics {
 }
 
 // Filings
-interface Filing {
+export interface Filing {
   filing_type: string
   filing_date: string
   accession_number: string
@@ -100,14 +100,14 @@ interface Filing {
   description?: string
 }
 
-interface FilingsResponse {
+export interface FilingsResponse {
   ticker: string
   filings: Filing[]
   total_count: number
 }
 
 // Valuation
-interface DCFInput {
+export interface DCFInput {
   growth_rate: number
   discount_rate: number
   terminal_growth_rate: number
@@ -115,7 +115,7 @@ interface DCFInput {
   fcf_override?: number
 }
 
-interface DCFResult {
+export interface DCFResult {
   ticker: string
   intrinsic_value_per_share: number
   current_price?: number
@@ -125,7 +125,7 @@ interface DCFResult {
   assumptions: DCFInput
 }
 
-interface ScenarioInput {
+export interface ScenarioInput {
   name: string
   revenue_growth_rate: number
   years_to_profitability?: number
@@ -135,11 +135,11 @@ interface ScenarioInput {
   probability?: number
 }
 
-interface ScenarioModelInput {
+export interface ScenarioModelInput {
   scenarios: ScenarioInput[]
 }
 
-interface ScenarioResult {
+export interface ScenarioResult {
   ticker: string
   current_price?: number
   scenarios: {
@@ -154,7 +154,7 @@ interface ScenarioResult {
 }
 
 // Watchlist
-interface WatchlistItem {
+export interface WatchlistItem {
   id: number
   ticker: string
   company_name?: string
@@ -165,7 +165,7 @@ interface WatchlistItem {
   added_at: string
 }
 
-interface Alert {
+export interface Alert {
   ticker: string
   company_name?: string
   current_price: number

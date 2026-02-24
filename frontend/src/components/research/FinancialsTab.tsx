@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useStatements } from '@/hooks/useCompany'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
+import type { FinancialStatement } from '@/lib/types'
 
 interface FinancialsTabProps {
   ticker: string
@@ -78,7 +79,7 @@ export function FinancialsTab({ ticker }: FinancialsTabProps) {
 
   // Get all fields (excluding 'period')
   const allFields = new Set<string>()
-  statements.forEach((s) => {
+  statements.forEach((s: FinancialStatement) => {
     Object.keys(s).forEach((k) => { if (k !== 'period') allFields.add(k) })
   })
   const fields = Array.from(allFields)
@@ -91,7 +92,7 @@ export function FinancialsTab({ ticker }: FinancialsTabProps) {
     : statementType === 'balance_sheet' ? 'stockholders_equity'
     : 'capex'
 
-  const chartData = statements.map((s) => ({
+  const chartData = statements.map((s: FinancialStatement) => ({
     period: String(s.period).slice(0, 4),
     [chartField]: Number(s[chartField]) / 1e9 || 0,
     [chartField2]: Number(s[chartField2]) / 1e9 || 0,
@@ -136,7 +137,7 @@ export function FinancialsTab({ ticker }: FinancialsTabProps) {
               <LineChart data={chartData}>
                 <XAxis dataKey="period" tick={{ fontSize: 12 }} />
                 <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip formatter={(v: number) => `$${v.toFixed(2)}B`} />
+                <Tooltip formatter={(v: number | undefined) => v != null ? `$${v.toFixed(2)}B` : '-'} />
                 <Line type="monotone" dataKey={chartField} stroke="#3b82f6" strokeWidth={2} dot={{ r: 3 }} />
                 <Line type="monotone" dataKey={chartField2} stroke="#22c55e" strokeWidth={2} dot={{ r: 3 }} />
               </LineChart>
@@ -156,7 +157,7 @@ export function FinancialsTab({ ticker }: FinancialsTabProps) {
                 <th className="text-left py-2 px-2 font-medium text-[var(--muted-foreground)] sticky left-0 bg-[var(--card)]">
                   Item
                 </th>
-                {statements.map((s) => (
+                {statements.map((s: FinancialStatement) => (
                   <th key={String(s.period)} className="text-right py-2 px-3 font-medium text-[var(--muted-foreground)] whitespace-nowrap">
                     {String(s.period).slice(0, 10)}
                   </th>
@@ -169,7 +170,7 @@ export function FinancialsTab({ ticker }: FinancialsTabProps) {
                   <td className="py-1.5 px-2 font-medium sticky left-0 bg-[var(--card)]">
                     {FIELD_LABELS[field] || field}
                   </td>
-                  {statements.map((s) => (
+                  {statements.map((s: FinancialStatement) => (
                     <td key={String(s.period)} className="py-1.5 px-3 text-right font-mono whitespace-nowrap">
                       {formatValue(s[field])}
                     </td>

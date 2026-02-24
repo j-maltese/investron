@@ -20,7 +20,8 @@ function MetricCard({ label, value, status = 'neutral', sublabel }: MetricCardPr
 }
 
 interface MetricsGridProps {
-  metrics: Record<string, unknown>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  metrics: Record<string, any>
 }
 
 function fmt(val: unknown, suffix = ''): string {
