@@ -3,6 +3,19 @@
 import yfinance as yf
 from app.utils.rate_limiter import yfinance_rate_limiter
 
+try:
+    from curl_cffi.requests import Session
+    _session = Session(impersonate="chrome")
+except ImportError:
+    _session = None
+
+
+def _ticker(symbol: str) -> yf.Ticker:
+    """Create a Ticker with browser-impersonating session if available."""
+    if _session:
+        return yf.Ticker(symbol, session=_session)
+    return yf.Ticker(symbol)
+
 
 async def get_stock_info(ticker: str) -> dict | None:
     """Get current stock info and key metrics from yfinance.
@@ -11,7 +24,7 @@ async def get_stock_info(ticker: str) -> dict | None:
     """
     await yfinance_rate_limiter.acquire()
     try:
-        stock = yf.Ticker(ticker)
+        stock = _ticker(ticker)
         info = stock.info
 
         if not info or info.get("regularMarketPrice") is None:
@@ -60,7 +73,7 @@ async def get_price_history(ticker: str, period: str = "5y") -> list[dict]:
     """
     await yfinance_rate_limiter.acquire()
     try:
-        stock = yf.Ticker(ticker)
+        stock = _ticker(ticker)
         hist = stock.history(period=period)
         if hist.empty:
             return []
@@ -83,7 +96,7 @@ async def get_insider_transactions(ticker: str) -> list[dict]:
     """Get recent insider transactions."""
     await yfinance_rate_limiter.acquire()
     try:
-        stock = yf.Ticker(ticker)
+        stock = _ticker(ticker)
         insiders = stock.insider_transactions
         if insiders is None or insiders.empty:
             return []
