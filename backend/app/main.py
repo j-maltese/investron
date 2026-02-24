@@ -41,16 +41,3 @@ app.include_router(valuation.router, prefix="/api/valuation", tags=["valuation"]
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "app": settings.app_name}
-
-
-@app.get("/debug/yfinance/{ticker}")
-async def debug_yfinance(ticker: str):
-    """Temporary debug endpoint — remove after deployment is verified."""
-    import yfinance as yf
-    from app.services.yfinance_svc import _ticker
-    try:
-        stock = _ticker(ticker.upper())
-        info = stock.info
-        return {"ticker": ticker, "keys": list(info.keys()) if info else [], "sample": {k: info.get(k) for k in ["regularMarketPrice", "currentPrice", "longName", "shortName", "symbol"] if info}}
-    except Exception as e:
-        return {"ticker": ticker, "error": str(e)}
