@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     # App
     app_name: str = "Investron"
     debug: bool = False
-    cors_origins: list[str] = ["http://localhost:5173"]
+    cors_origins: str = "http://localhost:5173"
 
     # Cache TTLs (seconds)
     cache_ttl_financials: int = 86400  # 24 hours
