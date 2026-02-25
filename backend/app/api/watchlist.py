@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,6 +8,23 @@ from app.models.schemas import WatchlistItemCreate, WatchlistItemUpdate
 from app.services import yfinance_svc
 
 router = APIRouter()
+
+PRICE_FETCH_TIMEOUT = 8  # seconds per ticker
+
+
+async def _fetch_price(item: dict) -> None:
+    """Enrich a watchlist item with its current price, with timeout."""
+    try:
+        info = await asyncio.wait_for(
+            yfinance_svc.get_stock_info(item["ticker"]),
+            timeout=PRICE_FETCH_TIMEOUT,
+        )
+        if info:
+            item["current_price"] = info.get("price")
+            item["price_change_pct"] = None
+    except (asyncio.TimeoutError, Exception):
+        item["current_price"] = None
+        item["price_change_pct"] = None
 
 
 @router.get("")
@@ -21,12 +40,8 @@ async def get_watchlist(db: AsyncSession = Depends(get_db)):
     )
     items = [dict(row) for row in result.mappings().all()]
 
-    # Enrich with current prices
-    for item in items:
-        info = await yfinance_svc.get_stock_info(item["ticker"])
-        if info:
-            item["current_price"] = info.get("price")
-            item["price_change_pct"] = None  # Could compute from historical data
+    # Enrich with current prices concurrently
+    await asyncio.gather(*[_fetch_price(item) for item in items])
 
     return {"items": items}
 

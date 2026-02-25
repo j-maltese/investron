@@ -1,5 +1,8 @@
 """yfinance wrapper for real-time prices, key metrics, and supplemental data."""
 
+import asyncio
+from functools import partial
+
 import yfinance as yf
 from app.utils.rate_limiter import yfinance_rate_limiter
 
@@ -17,12 +20,8 @@ def _ticker(symbol: str) -> yf.Ticker:
     return yf.Ticker(symbol)
 
 
-async def get_stock_info(ticker: str) -> dict | None:
-    """Get current stock info and key metrics from yfinance.
-
-    Returns a flat dict of key metrics, or None if ticker not found.
-    """
-    await yfinance_rate_limiter.acquire()
+def _get_stock_info_sync(ticker: str) -> dict | None:
+    """Synchronous helper — runs in a thread pool."""
     try:
         stock = _ticker(ticker)
         info = stock.info
@@ -64,14 +63,18 @@ async def get_stock_info(ticker: str) -> dict | None:
         return None
 
 
-async def get_price_history(ticker: str, period: str = "5y") -> list[dict]:
-    """Get historical price data.
+async def get_stock_info(ticker: str) -> dict | None:
+    """Get current stock info and key metrics from yfinance.
 
-    Args:
-        ticker: Stock ticker symbol.
-        period: Time period (1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max).
+    Returns a flat dict of key metrics, or None if ticker not found.
     """
     await yfinance_rate_limiter.acquire()
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, partial(_get_stock_info_sync, ticker))
+
+
+def _get_price_history_sync(ticker: str, period: str) -> list[dict]:
+    """Synchronous helper — runs in a thread pool."""
     try:
         stock = _ticker(ticker)
         hist = stock.history(period=period)
@@ -92,9 +95,22 @@ async def get_price_history(ticker: str, period: str = "5y") -> list[dict]:
         return []
 
 
-async def get_insider_transactions(ticker: str) -> list[dict]:
-    """Get recent insider transactions."""
+async def get_price_history(ticker: str, period: str = "5y") -> list[dict]:
+    """Get historical price data.
+
+    Args:
+        ticker: Stock ticker symbol.
+        period: Time period (1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max).
+    """
     await yfinance_rate_limiter.acquire()
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, partial(_get_price_history_sync, ticker, period)
+    )
+
+
+def _get_insider_transactions_sync(ticker: str) -> list[dict]:
+    """Synchronous helper — runs in a thread pool."""
     try:
         stock = _ticker(ticker)
         insiders = stock.insider_transactions
@@ -103,3 +119,12 @@ async def get_insider_transactions(ticker: str) -> list[dict]:
         return insiders.head(50).to_dict("records")
     except Exception:
         return []
+
+
+async def get_insider_transactions(ticker: str) -> list[dict]:
+    """Get recent insider transactions."""
+    await yfinance_rate_limiter.acquire()
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, partial(_get_insider_transactions_sync, ticker)
+    )

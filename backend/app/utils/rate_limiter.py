@@ -31,5 +31,5 @@ class RateLimiter:
 # SEC EDGAR: 10 requests per second
 edgar_rate_limiter = RateLimiter(max_requests=8, per_seconds=1.0)  # Conservative
 
-# yfinance: 1 request per second (courtesy)
-yfinance_rate_limiter = RateLimiter(max_requests=1, per_seconds=1.0)
+# yfinance: allow small burst for concurrent watchlist fetches
+yfinance_rate_limiter = RateLimiter(max_requests=5, per_seconds=2.0)
