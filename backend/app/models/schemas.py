@@ -188,3 +188,23 @@ class AlertResponse(BaseModel):
     target_price: float
     distance_pct: float  # How close to target (%)
     message: str
+
+
+# --- Release Notes ---
+
+class ReleaseNoteSection(BaseModel):
+    type: str  # "new_feature" | "enhancement" | "bug_fix"
+    label: str
+    items: list[str]
+
+
+class ReleaseNote(BaseModel):
+    version: str
+    date: str
+    title: str
+    summary: str
+    sections: list[ReleaseNoteSection]
+
+
+class ReleaseNotesResponse(BaseModel):
+    releases: list[ReleaseNote]

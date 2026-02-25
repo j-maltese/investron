@@ -1,11 +1,15 @@
 import { useState } from 'react'
+import { ChevronDown, ChevronRight, Tag, Wrench, Bug } from 'lucide-react'
 import { PageLayout } from '@/components/layout/PageLayout'
+import { useReleaseNotes } from '@/hooks/useReleaseNotes'
+import type { ReleaseNote, ReleaseNoteSection } from '@/lib/types'
 
-type Tab = 'user' | 'developer'
+type Tab = 'user' | 'developer' | 'releases'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'user', label: 'User Guide' },
   { key: 'developer', label: 'Developer Guide' },
+  { key: 'releases', label: 'Release Notes' },
 ]
 
 export function Docs() {
@@ -37,6 +41,7 @@ export function Docs() {
         <div className="max-w-4xl">
           {activeTab === 'user' && <UserGuide />}
           {activeTab === 'developer' && <DeveloperGuide />}
+          {activeTab === 'releases' && <ReleaseNotesTab />}
         </div>
       </div>
     </PageLayout>
@@ -473,6 +478,84 @@ function DeveloperGuide() {
           <li><strong>Backend README</strong> — Full API route table, database schema, service layer details, EDGAR integration</li>
         </ul>
       </Section>
+    </div>
+  )
+}
+
+/* ─── Release Notes ─── */
+
+function ReleaseNotesTab() {
+  const { data, isLoading, error } = useReleaseNotes()
+
+  if (isLoading) {
+    return <p className="text-sm text-[var(--muted-foreground)]">Loading release notes...</p>
+  }
+
+  if (error) {
+    return <p className="text-sm text-red-500">Failed to load release notes.</p>
+  }
+
+  const releases = data?.releases ?? []
+
+  if (releases.length === 0) {
+    return <p className="text-sm text-[var(--muted-foreground)]">No release notes available.</p>
+  }
+
+  return (
+    <div className="space-y-6">
+      {releases.map((release) => (
+        <ReleaseCard key={release.version} release={release} />
+      ))}
+    </div>
+  )
+}
+
+function ReleaseCard({ release }: { release: ReleaseNote }) {
+  return (
+    <div className="card space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold">v{release.version} — {release.title}</h2>
+        <span className="text-sm text-[var(--muted-foreground)]">{release.date}</span>
+      </div>
+      <p className="text-sm text-[var(--muted-foreground)]">{release.summary}</p>
+      <div className="space-y-2">
+        {release.sections.map((section) => (
+          <CollapsibleSection key={section.type} section={section} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+const SECTION_ICONS: Record<string, React.ReactNode> = {
+  new_feature: <Tag className="w-4 h-4 text-green-500" />,
+  enhancement: <Wrench className="w-4 h-4 text-blue-500" />,
+  bug_fix: <Bug className="w-4 h-4 text-orange-500" />,
+}
+
+function CollapsibleSection({ section }: { section: ReleaseNoteSection }) {
+  const [isOpen, setIsOpen] = useState(true)
+
+  return (
+    <div className="border border-[var(--border)] rounded-md">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-sm font-medium hover:bg-[var(--muted)] transition-colors rounded-md"
+      >
+        {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+        {SECTION_ICONS[section.type]}
+        {section.label}
+        <span className="text-[var(--muted-foreground)] ml-auto">{section.items.length}</span>
+      </button>
+      {isOpen && (
+        <ul className="px-3 pb-3 space-y-1">
+          {section.items.map((item, i) => (
+            <li key={i} className="text-sm text-[var(--foreground)] pl-8 list-disc">
+              {item}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }

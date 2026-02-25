@@ -173,3 +173,22 @@ export interface Alert {
   distance_pct: number
   message: string
 }
+
+// Release Notes
+export interface ReleaseNoteSection {
+  type: 'new_feature' | 'enhancement' | 'bug_fix'
+  label: string
+  items: string[]
+}
+
+export interface ReleaseNote {
+  version: string
+  date: string
+  title: string
+  summary: string
+  sections: ReleaseNoteSection[]
+}
+
+export interface ReleaseNotesResponse {
+  releases: ReleaseNote[]
+}

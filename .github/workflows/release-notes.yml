@@ -1,0 +1,64 @@
+name: Generate Release Notes
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-notes
+  cancel-in-progress: true
+
+jobs:
+  release-notes:
+    # Skip if the commit was auto-generated (prevents infinite loop)
+    if: "!contains(github.event.head_commit.message, '[automated]')"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history needed for git log and tags
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generate release notes
+        id: generate
+        run: |
+          python scripts/generate_release_notes.py
+
+          # Check if any files were generated (new untracked or modified)
+          if git diff --quiet && [ -z "$(git ls-files --others --exclude-standard Docs/)" ]; then
+            echo "generated=false" >> $GITHUB_OUTPUT
+          else
+            echo "generated=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Determine release version
+        if: steps.generate.outputs.generated == 'true'
+        id: version
+        run: |
+          LATEST_FILE=$(ls -t Docs/ReleaseNotes/*.json | head -1)
+          VERSION=$(python -c "import json; print(json.load(open('$LATEST_FILE'))['version'])")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Commit release notes
+        if: steps.generate.outputs.generated == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Docs/ReleaseNotes/ Docs/VersionREADMEs/
+          git commit -m "docs: generate release notes for v${{ steps.version.outputs.version }} [automated]"
+          git push
+
+      - name: Create version tag
+        if: steps.generate.outputs.generated == 'true'
+        run: |
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"

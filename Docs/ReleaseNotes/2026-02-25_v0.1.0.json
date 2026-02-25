@@ -1,0 +1,38 @@
+{
+  "version": "0.1.0",
+  "date": "2026-02-25",
+  "title": "Initial Release",
+  "summary": "First production release of Investron — a full-stack investing research platform with watchlist management, stock analysis, and in-app documentation.",
+  "sections": [
+    {
+      "type": "new_feature",
+      "label": "New Features",
+      "items": [
+        "Full-stack investing research application with watchlist, stock detail views, and financial metrics",
+        "In-app documentation page with project overview and architecture details",
+        "Railway backend deployment with Procfile support",
+        "Vercel frontend deployment"
+      ]
+    },
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Concurrent watchlist price fetching — prices for all tickers load in parallel instead of sequentially",
+        "yfinance calls offloaded to thread pool to avoid blocking the async event loop",
+        "Rate limiter tuned to allow small burst (5 requests / 2 seconds) for concurrent watchlist loads",
+        "Full-width layout for header and main content area"
+      ]
+    },
+    {
+      "type": "bug_fix",
+      "label": "Bug Fixes",
+      "items": [
+        "Fixed yfinance failing on cloud servers by adding curl_cffi with browser impersonation",
+        "Fixed CORS_ORIGINS environment variable parsing for comma-separated origins",
+        "Fixed TypeScript build errors for Vercel deployment",
+        "Upgraded yfinance for curl_cffi compatibility"
+      ]
+    }
+  ]
+}

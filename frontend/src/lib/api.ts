@@ -2,7 +2,7 @@ import { supabase } from './supabase'
 import type {
   CompanySearchResult, Company, FinancialStatementsResponse, KeyMetrics,
   GrahamScoreResponse, GrowthMetrics, FilingsResponse, DCFInput, DCFResult,
-  ScenarioModelInput, ScenarioResult, WatchlistItem, Alert,
+  ScenarioModelInput, ScenarioResult, WatchlistItem, Alert, ReleaseNotesResponse,
 } from './types'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
@@ -92,4 +92,8 @@ export const api = {
 
   getAlerts: () =>
     apiFetch<{ alerts: Alert[] }>('/api/watchlist/alerts'),
+
+  // Release Notes
+  getReleaseNotes: () =>
+    apiFetch<ReleaseNotesResponse>('/api/release-notes'),
 }
