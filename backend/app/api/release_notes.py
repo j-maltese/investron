@@ -9,13 +9,15 @@ from app.models.schemas import ReleaseNote, ReleaseNotesResponse
 
 router = APIRouter()
 
-# Resolve Docs/ReleaseNotes relative to the repo root.
-# This file lives at backend/app/api/release_notes.py — 4 levels up is repo root.
+# Resolve Docs/ReleaseNotes directory.
+# Local dev: this file is at backend/app/api/release_notes.py — 4 levels up is repo root.
+# Docker/Railway: file is at /app/app/api/release_notes.py — 3 levels up is /app/.
 _RELEASE_NOTES_DIR: Path | None = None
 for _candidate in [
     Path(__file__).resolve().parent.parent.parent.parent / "Docs" / "ReleaseNotes",
-    Path("../Docs/ReleaseNotes"),
+    Path(__file__).resolve().parent.parent.parent / "Docs" / "ReleaseNotes",
     Path("Docs/ReleaseNotes"),
+    Path("../Docs/ReleaseNotes"),
 ]:
     if _candidate.exists():
         _RELEASE_NOTES_DIR = _candidate.resolve()
