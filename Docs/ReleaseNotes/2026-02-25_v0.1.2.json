@@ -1,0 +1,15 @@
+{
+  "version": "0.1.2",
+  "date": "2026-02-25",
+  "title": "v0.1.2",
+  "summary": "Release 0.1.2 includes 1 enhancement.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Updates Dockerfile and release notes integration"
+      ]
+    }
+  ]
+}
