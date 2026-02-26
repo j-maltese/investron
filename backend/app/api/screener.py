@@ -8,7 +8,10 @@ Endpoints:
   GET /results  — Paginated, sortable, filterable ranked stock list
   GET /status   — Scanner progress and last-updated timestamp
   GET /sectors  — Distinct sectors for the filter dropdown
+  GET /indices  — Distinct indices for the filter dropdown
 """
+
+import json
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import text
@@ -39,6 +42,7 @@ async def get_screener_results(
     sort_by: str = Query("composite_score"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     sector: str | None = Query(None),
+    index: str | None = Query(None),
     min_score: float | None = Query(None, ge=0, le=100),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -50,6 +54,7 @@ async def get_screener_results(
       sort_by: column to sort (validated against allowlist)
       sort_order: "asc" or "desc"
       sector: filter by GICS sector name
+      index: filter by index membership (e.g., "S&P 500", "Dow 30")
       min_score: minimum composite score threshold
       limit/offset: pagination
     """
@@ -64,6 +69,11 @@ async def get_screener_results(
     if sector:
         where_parts.append("s.sector = :sector")
         params["sector"] = sector
+
+    if index:
+        # JSONB @> (contains) operator: filter rows whose indices array contains this index
+        where_parts.append("s.indices @> CAST(:index_filter AS jsonb)")
+        params["index_filter"] = json.dumps([index])
 
     if min_score is not None:
         where_parts.append("s.composite_score >= :min_score")
@@ -84,7 +94,7 @@ async def get_screener_results(
                 s.graham_number, s.margin_of_safety,
                 s.fcf_yield, s.earnings_yield,
                 s.composite_score, s.rank,
-                s.warnings, s.scored_at
+                s.warnings, s.indices, s.scored_at
             FROM screener_scores s
             {where_clause}
             ORDER BY s.{sort_by} {sort_order} {null_order}
@@ -119,7 +129,7 @@ async def get_screener_results(
 async def get_scanner_status(db: AsyncSession = Depends(get_db)):
     """Get current scanner status — running state, progress, last completion time.
 
-    Used by the frontend to show "Scanning... (150/503)" and "Last updated: ..." indicators.
+    Used by the frontend to show "Scanning... (150/2000)" and "Last updated: ..." indicators.
     """
     result = await db.execute(
         text("SELECT * FROM scanner_status WHERE id = 1")
@@ -142,3 +152,21 @@ async def get_sectors(db: AsyncSession = Depends(get_db)):
     )
     sectors = [row["sector"] for row in result.mappings().all()]
     return {"sectors": sectors}
+
+
+@router.get("/indices")
+async def get_indices(db: AsyncSession = Depends(get_db)):
+    """Get distinct index names from all scored stocks — populates the index filter dropdown.
+
+    Uses jsonb_array_elements_text() to unnest the JSONB indices arrays and
+    return a flat, sorted list of unique index names.
+    """
+    result = await db.execute(
+        text("""
+            SELECT DISTINCT idx
+            FROM screener_scores, jsonb_array_elements_text(indices) AS idx
+            ORDER BY idx
+        """)
+    )
+    indices = [row["idx"] for row in result.mappings().all()]
+    return {"indices": indices}

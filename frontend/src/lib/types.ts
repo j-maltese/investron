@@ -219,6 +219,7 @@ export interface ScreenerScore {
   composite_score: number
   rank?: number
   warnings: ScreenerWarning[]
+  indices?: string[]
   scored_at?: string
 }
 

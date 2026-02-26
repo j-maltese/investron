@@ -103,6 +103,7 @@ export const api = {
     sort_by?: string
     sort_order?: 'asc' | 'desc'
     sector?: string
+    index?: string
     min_score?: number
     limit?: number
     offset?: number
@@ -111,6 +112,7 @@ export const api = {
     if (params?.sort_by) searchParams.set('sort_by', params.sort_by)
     if (params?.sort_order) searchParams.set('sort_order', params.sort_order)
     if (params?.sector) searchParams.set('sector', params.sector)
+    if (params?.index) searchParams.set('index', params.index)
     if (params?.min_score != null) searchParams.set('min_score', String(params.min_score))
     if (params?.limit) searchParams.set('limit', String(params.limit))
     if (params?.offset) searchParams.set('offset', String(params.offset))
@@ -123,4 +125,7 @@ export const api = {
 
   getScreenerSectors: () =>
     apiFetch<{ sectors: string[] }>('/api/screener/sectors'),
+
+  getScreenerIndices: () =>
+    apiFetch<{ indices: string[] }>('/api/screener/indices'),
 }

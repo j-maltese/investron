@@ -19,6 +19,7 @@ interface ScreenerParams {
   sort_by?: string
   sort_order?: 'asc' | 'desc'
   sector?: string
+  index?: string
   min_score?: number
   limit?: number
   offset?: number
@@ -59,5 +60,17 @@ export function useScreenerSectors() {
     queryKey: ['screener-sectors'],
     queryFn: () => api.getScreenerSectors(),
     staleTime: 10 * 60_000,    // 10 min — sectors don't change often
+  })
+}
+
+/**
+ * Fetch distinct index names for the index filter dropdown.
+ * Indices are static (derived from CSVs), so we cache aggressively.
+ */
+export function useScreenerIndices() {
+  return useQuery({
+    queryKey: ['screener-indices'],
+    queryFn: () => api.getScreenerIndices(),
+    staleTime: 10 * 60_000,    // 10 min — indices don't change often
   })
 }

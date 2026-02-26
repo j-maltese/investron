@@ -1,9 +1,10 @@
 /**
- * ValueScreener — Dashboard panel showing ranked S&P 500 stocks by composite value score.
+ * ValueScreener — Dashboard panel showing ranked stocks by composite value score.
  *
  * Architecture:
  *   - Fetches pre-computed scores from GET /api/screener/results (background scanner populates these)
- *   - Supports server-side sorting (click column headers) and sector filtering
+ *   - Supports server-side sorting (click column headers), sector filtering, and index filtering
+ *   - Covers ~2000 unique stocks across S&P 500, NASDAQ-100, Dow 30, S&P MidCap 400, Russell 2000
  *   - Shows scanner progress when a scan is running
  *   - Warning indicators use CSS-only hover tooltips (no tooltip library)
  *
@@ -19,7 +20,7 @@ import {
   TrendingDown, Clock, Plus, ExternalLink,
   ArrowUp, ArrowDown, ArrowUpDown, Loader2,
 } from 'lucide-react'
-import { useScreenerResults, useScannerStatus, useScreenerSectors } from '@/hooks/useScreener'
+import { useScreenerResults, useScannerStatus, useScreenerSectors, useScreenerIndices } from '@/hooks/useScreener'
 import { useAddToWatchlist } from '@/hooks/useWatchlist'
 import type { ScreenerScore, ScreenerWarning } from '@/lib/types'
 
@@ -270,6 +271,7 @@ export function ValueScreener() {
   const [sortBy, setSortBy] = useState('composite_score')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
   const [sectorFilter, setSectorFilter] = useState<string | undefined>()
+  const [indexFilter, setIndexFilter] = useState<string | undefined>()
   const [showCount, setShowCount] = useState(25)
 
   // Data hooks
@@ -277,10 +279,12 @@ export function ValueScreener() {
     sort_by: sortBy,
     sort_order: sortOrder,
     sector: sectorFilter,
+    index: indexFilter,
     limit: showCount,
   })
   const { data: status } = useScannerStatus()
   const { data: sectorsData } = useScreenerSectors()
+  const { data: indicesData } = useScreenerIndices()
   const addMutation = useAddToWatchlist()
 
   /**
@@ -333,22 +337,39 @@ export function ValueScreener() {
           </div>
         </div>
 
-        {/* Sector filter dropdown */}
-        {sectorsData?.sectors && sectorsData.sectors.length > 0 && (
-          <select
-            className="input text-sm w-auto"
-            value={sectorFilter || ''}
-            onChange={(e) => {
-              setSectorFilter(e.target.value || undefined)
-              setShowCount(25) // Reset pagination on filter change
-            }}
-          >
-            <option value="">All Sectors</option>
-            {sectorsData.sectors.map(s => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-        )}
+        {/* Filter dropdowns: index and sector */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {indicesData?.indices && indicesData.indices.length > 0 && (
+            <select
+              className="input text-sm w-auto"
+              value={indexFilter || ''}
+              onChange={(e) => {
+                setIndexFilter(e.target.value || undefined)
+                setShowCount(25)
+              }}
+            >
+              <option value="">All Indices</option>
+              {indicesData.indices.map(idx => (
+                <option key={idx} value={idx}>{idx}</option>
+              ))}
+            </select>
+          )}
+          {sectorsData?.sectors && sectorsData.sectors.length > 0 && (
+            <select
+              className="input text-sm w-auto"
+              value={sectorFilter || ''}
+              onChange={(e) => {
+                setSectorFilter(e.target.value || undefined)
+                setShowCount(25)
+              }}
+            >
+              <option value="">All Sectors</option>
+              {sectorsData.sectors.map(s => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          )}
+        </div>
       </div>
 
       {/* Results table (or loading/empty states) */}
