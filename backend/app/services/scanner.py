@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 
 from app.config import get_settings
-from app.models.database import async_session_factory
+from app.models import database as _db
 from app.services import yfinance_svc
 from app.services.screener import compute_composite_score
 from app.services.universe import get_ticker_list
@@ -176,7 +176,7 @@ async def run_full_scan() -> None:
     """
     settings = get_settings()
 
-    if async_session_factory is None:
+    if _db.async_session_factory is None:
         logger.error("Database not initialized, cannot run scanner")
         return
 
@@ -193,7 +193,7 @@ async def run_full_scan() -> None:
                 len(tickers), batch_size, batch_delay)
 
     # Mark scan as started
-    async with async_session_factory() as db:
+    async with _db.async_session_factory() as db:
         await _update_scanner_status(
             db,
             is_running=True,
@@ -218,7 +218,7 @@ async def run_full_scan() -> None:
         )
 
         # Persist results to DB
-        async with async_session_factory() as db:
+        async with _db.async_session_factory() as db:
             for ticker, result in zip(batch, results):
                 if isinstance(result, Exception):
                     logger.warning("Exception scoring %s: %s", ticker, result)
@@ -246,7 +246,7 @@ async def run_full_scan() -> None:
         await asyncio.sleep(batch_delay)
 
     # Recalculate ranks now that all scores are updated
-    async with async_session_factory() as db:
+    async with _db.async_session_factory() as db:
         await _update_ranks(db)
         await _update_scanner_status(
             db,
@@ -280,8 +280,8 @@ async def scanner_loop() -> None:
             logger.error("Scanner error: %s", e, exc_info=True)
             # Record the error in status for visibility
             try:
-                if async_session_factory:
-                    async with async_session_factory() as db:
+                if _db.async_session_factory:
+                    async with _db.async_session_factory() as db:
                         await _update_scanner_status(
                             db,
                             is_running=False,
