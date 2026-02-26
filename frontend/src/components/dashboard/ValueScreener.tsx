@@ -60,6 +60,20 @@ function scoreBgClass(score: number): string {
 // SortableHeader — clickable column header with sort direction indicator
 // ============================================================================
 
+/**
+ * HeaderTooltip — CSS-only tooltip shown on hover for column header descriptions.
+ * Uses the same group-hover pattern as WarningIndicators (no JS state or library).
+ */
+function HeaderTooltip({ text }: { text: string }) {
+  return (
+    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-20 pointer-events-none whitespace-normal w-48">
+      <div className="bg-[var(--card)] border border-[var(--border)] rounded-lg px-3 py-2 text-xs text-[var(--foreground)] shadow-lg font-normal text-left">
+        {text}
+      </div>
+    </div>
+  )
+}
+
 interface SortableHeaderProps {
   label: string
   column: string
@@ -67,15 +81,16 @@ interface SortableHeaderProps {
   currentOrder: 'asc' | 'desc'
   onSort: (column: string) => void
   align?: 'left' | 'right'
+  tooltip?: string
 }
 
-function SortableHeader({ label, column, currentSort, currentOrder, onSort, align = 'right' }: SortableHeaderProps) {
+function SortableHeader({ label, column, currentSort, currentOrder, onSort, align = 'right', tooltip }: SortableHeaderProps) {
   const isActive = currentSort === column
   const alignClass = align === 'left' ? 'text-left' : 'text-right'
 
   return (
     <th
-      className={`py-2 px-2 font-medium text-[var(--muted-foreground)] cursor-pointer hover:text-[var(--foreground)] transition-colors select-none ${alignClass}`}
+      className={`py-2 px-2 font-medium text-[var(--muted-foreground)] cursor-pointer hover:text-[var(--foreground)] transition-colors select-none relative group ${alignClass}`}
       onClick={() => onSort(column)}
     >
       <span className="inline-flex items-center gap-1">
@@ -88,6 +103,18 @@ function SortableHeader({ label, column, currentSort, currentOrder, onSort, alig
           <ArrowUpDown className="w-3 h-3 opacity-30" />
         )}
       </span>
+      {tooltip && <HeaderTooltip text={tooltip} />}
+    </th>
+  )
+}
+
+/** Static (non-sortable) column header with optional tooltip */
+function StaticHeader({ label, align = 'right', tooltip }: { label: string; align?: 'left' | 'right' | 'center'; tooltip?: string }) {
+  const alignClass = align === 'left' ? 'text-left' : align === 'center' ? 'text-center' : 'text-right'
+  return (
+    <th className={`py-2 px-2 font-medium text-[var(--muted-foreground)] relative group ${alignClass}`}>
+      {label}
+      {tooltip && <HeaderTooltip text={tooltip} />}
     </th>
   )
 }
@@ -342,17 +369,17 @@ export function ValueScreener() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[var(--border)]">
-                  <th className="py-2 px-2 font-medium text-[var(--muted-foreground)] text-center w-10">#</th>
-                  <th className="py-2 px-2 font-medium text-[var(--muted-foreground)] text-left">Ticker</th>
-                  <SortableHeader label="Score" column="composite_score" {...sortProps} />
-                  <th className="py-2 px-2 font-medium text-[var(--muted-foreground)] text-right">Price</th>
-                  <SortableHeader label="MoS %" column="margin_of_safety" {...sortProps} />
-                  <SortableHeader label="P/E" column="pe_ratio" {...sortProps} />
-                  <SortableHeader label="P/B" column="pb_ratio" {...sortProps} />
-                  <SortableHeader label="ROE" column="roe" {...sortProps} />
-                  <SortableHeader label="Div %" column="dividend_yield" {...sortProps} />
-                  <th className="py-2 px-2 font-medium text-[var(--muted-foreground)] text-right">Flags</th>
-                  <th className="py-2 px-2 font-medium text-[var(--muted-foreground)] text-right">Actions</th>
+                  <StaticHeader label="#" align="center" tooltip="Rank by composite value score (1 = best)" />
+                  <StaticHeader label="Ticker" align="left" />
+                  <SortableHeader label="Score" column="composite_score" {...sortProps} tooltip="Weighted composite of all value metrics (0-100). Higher = stronger value signal." />
+                  <StaticHeader label="Price" tooltip="Current market share price from Yahoo Finance." />
+                  <SortableHeader label="MoS %" column="margin_of_safety" {...sortProps} tooltip="Margin of Safety: how far the price is below the Graham Number (intrinsic value). Positive = potentially undervalued." />
+                  <SortableHeader label="P/E" column="pe_ratio" {...sortProps} tooltip="Price-to-Earnings ratio. Lower is cheaper. Graham preferred P/E under 15." />
+                  <SortableHeader label="P/B" column="pb_ratio" {...sortProps} tooltip="Price-to-Book ratio. Lower means you pay less per dollar of net assets. Graham preferred under 1.5." />
+                  <SortableHeader label="ROE" column="roe" {...sortProps} tooltip="Return on Equity: how efficiently the company generates profit from shareholders' equity. Higher is better." />
+                  <SortableHeader label="Div %" column="dividend_yield" {...sortProps} tooltip="Annual dividend yield. Shows income returned to shareholders as a percentage of share price." />
+                  <StaticHeader label="Flags" tooltip="Warning indicators: red = high severity, amber = medium, blue = low. Hover over dots for details." />
+                  <StaticHeader label="Actions" />
                 </tr>
               </thead>
               <tbody>
