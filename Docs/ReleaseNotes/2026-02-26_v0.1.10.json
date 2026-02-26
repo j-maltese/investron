@@ -1,0 +1,16 @@
+{
+  "version": "0.1.10",
+  "date": "2026-02-26",
+  "title": "v0.1.10",
+  "summary": "Release 0.1.10 includes 2 enhancements.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Infinite scroll on Value Screener",
+        "Freezes ValueScreen headers for scrolling and fixes tool tip issue there"
+      ]
+    }
+  ]
+}
