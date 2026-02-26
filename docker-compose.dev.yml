@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: investron-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: investron
+    ports:
+      - "5433:5432"
+    volumes:
+      # Auto-run schema.sql on first startup (when volume is empty)
+      - ./backend/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./backend/seed_dev.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+      - investron_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d investron"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+volumes:
+  investron_pgdata:

@@ -68,9 +68,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+import json as _json
+
+# Parse CORS origins: supports both JSON array '["http://..."]' and plain
+# comma-separated 'http://..., http://...' formats.
+try:
+    _origins = _json.loads(settings.cors_origins)
+except (ValueError, TypeError):
+    _origins = [o.strip() for o in settings.cors_origins.split(",")]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in settings.cors_origins.split(",")],
+    allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
