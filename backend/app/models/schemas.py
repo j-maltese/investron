@@ -248,6 +248,9 @@ class ScreenerScoreResponse(BaseModel):
     # Warning flags (informational, not filters)
     warnings: list[ScreenerWarning] = []
 
+    # Index memberships (e.g., ["S&P 500", "NASDAQ-100", "Dow 30"])
+    indices: list[str] = []
+
     scored_at: Optional[datetime] = None
 
 

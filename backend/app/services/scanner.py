@@ -1,4 +1,4 @@
-"""Background scanner — continuously scores S&P 500 stocks for the value screener.
+"""Background scanner — continuously scores stocks across multiple indices for the value screener.
 
 Architecture:
   - scanner_loop() is an infinite async coroutine started from FastAPI's lifespan.
@@ -11,7 +11,7 @@ Architecture:
 Rate limiting strategy:
   - Batch of 10 tickers scored concurrently (rate limiter queues excess requests).
   - 5-second delay between batches leaves headroom for user requests on the Research page.
-  - Full scan of ~503 tickers takes ~7-8 minutes. Scan repeats every hour.
+  - Full scan of ~2000 unique tickers takes ~35 minutes. Scan repeats every hour.
 
 Error resilience:
   - Individual ticker failures are logged and skipped — one bad ticker doesn't stop the scan.
@@ -30,7 +30,7 @@ from app.config import get_settings
 from app.models import database as _db
 from app.services import yfinance_svc
 from app.services.screener import compute_composite_score
-from app.services.universe import get_ticker_list
+from app.services.universe import load_universe
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ async def _upsert_score(db, score_data: dict) -> None:
                 pe_score, pb_score, roe_score, debt_equity_score,
                 fcf_yield, fcf_yield_score, earnings_yield, earnings_yield_score,
                 dividend_score, margin_of_safety_score,
-                composite_score, warnings, scored_at, metrics_fetched_at
+                composite_score, warnings, indices, scored_at, metrics_fetched_at
             ) VALUES (
                 :ticker, :company_name, :sector, :industry,
                 :price, :market_cap, :pe_ratio, :forward_pe, :pb_ratio, :ps_ratio,
@@ -87,7 +87,8 @@ async def _upsert_score(db, score_data: dict) -> None:
                 :pe_score, :pb_score, :roe_score, :debt_equity_score,
                 :fcf_yield, :fcf_yield_score, :earnings_yield, :earnings_yield_score,
                 :dividend_score, :margin_of_safety_score,
-                :composite_score, CAST(:warnings AS jsonb), :scored_at, :metrics_fetched_at
+                :composite_score, CAST(:warnings AS jsonb), CAST(:indices AS jsonb),
+                :scored_at, :metrics_fetched_at
             )
             ON CONFLICT (ticker) DO UPDATE SET
                 company_name = EXCLUDED.company_name,
@@ -113,12 +114,14 @@ async def _upsert_score(db, score_data: dict) -> None:
                 margin_of_safety_score = EXCLUDED.margin_of_safety_score,
                 composite_score = EXCLUDED.composite_score,
                 warnings = EXCLUDED.warnings,
+                indices = EXCLUDED.indices,
                 scored_at = EXCLUDED.scored_at,
                 metrics_fetched_at = EXCLUDED.metrics_fetched_at
         """),
         {
             **score_data,
             "warnings": json.dumps(score_data["warnings"]),
+            "indices": json.dumps(score_data.get("indices", [])),
             "scored_at": now,
             "metrics_fetched_at": now,
         },
@@ -168,7 +171,7 @@ async def _score_ticker(ticker: str, timeout: int) -> dict | None:
 
 
 async def run_full_scan() -> None:
-    """Run a full scan of all S&P 500 tickers.
+    """Run a full scan of all tickers across all configured indices.
 
     Processes tickers in batches, upserting each score to the DB.
     After all tickers are processed, recalculates ranks.
@@ -180,10 +183,16 @@ async def run_full_scan() -> None:
         logger.error("Database not initialized, cannot run scanner")
         return
 
-    tickers = get_ticker_list()
-    if not tickers:
-        logger.error("No tickers loaded from universe file")
+    universe = load_universe()
+    if not universe:
+        logger.error("No tickers loaded from universe files")
         return
+
+    # Build lookup: ticker → list of index names (e.g., {"AAPL": ["S&P 500", "NASDAQ-100", "Dow 30"]})
+    ticker_indices: dict[str, list[str]] = {
+        entry["ticker"]: entry["indices"] for entry in universe
+    }
+    tickers = list(ticker_indices.keys())
 
     batch_size = settings.scanner_batch_size
     batch_delay = settings.scanner_batch_delay
@@ -229,6 +238,8 @@ async def run_full_scan() -> None:
                     continue
 
                 try:
+                    # Inject index memberships before upserting
+                    result["indices"] = ticker_indices.get(ticker, [])
                     await _upsert_score(db, result)
                     scanned += 1
                 except Exception as e:

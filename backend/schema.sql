@@ -130,6 +130,10 @@ CREATE TABLE IF NOT EXISTS screener_scores (
     -- Warnings inform but never filter — distressed stocks stay in results
     warnings JSONB DEFAULT '[]'::jsonb,
 
+    -- Index memberships as JSONB array: ["S&P 500", "NASDAQ-100", "Dow 30"]
+    -- A stock can belong to multiple indices. Uses GIN index for @> (contains) queries.
+    indices JSONB DEFAULT '[]'::jsonb,
+
     -- When this row was last scored and when the underlying metrics were fetched
     scored_at TIMESTAMPTZ DEFAULT NOW(),
     metrics_fetched_at TIMESTAMPTZ DEFAULT NOW()
@@ -138,6 +142,7 @@ CREATE TABLE IF NOT EXISTS screener_scores (
 CREATE INDEX IF NOT EXISTS idx_screener_composite ON screener_scores(composite_score DESC);
 CREATE INDEX IF NOT EXISTS idx_screener_rank ON screener_scores(rank ASC);
 CREATE INDEX IF NOT EXISTS idx_screener_sector ON screener_scores(sector);
+CREATE INDEX IF NOT EXISTS idx_screener_indices ON screener_scores USING GIN (indices);
 
 -- Scanner status: single-row table tracking background scan progress.
 -- The CHECK constraint on id ensures only one row ever exists.
