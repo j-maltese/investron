@@ -91,7 +91,8 @@ function UserGuide() {
 
       <Section title="2. Dashboard & Watchlist">
         <p>
-          The Dashboard shows your personal watchlist — a table of stocks you're tracking.
+          The Dashboard shows your personal watchlist — a table of stocks you're tracking — and the
+          Value Screener, which automatically ranks S&P 500 stocks by value (see section 3).
         </p>
         <SubSection title="Adding stocks">
           <p>
@@ -119,7 +120,61 @@ function UserGuide() {
         </SubSection>
       </Section>
 
-      <Section title="3. Company Research">
+      <Section title="3. Value Screener">
+        <p>
+          Below the Watchlist, the <strong>Value Screener</strong> panel ranks all S&P 500 companies (~500 stocks)
+          by a composite value score inspired by Benjamin Graham and Warren Buffett. A background engine continuously
+          re-scores every stock roughly once per hour — no action needed from you.
+        </p>
+        <SubSection title="How the composite score works">
+          <p>
+            Each stock receives a score from 0 to 100 based on a weighted blend of value metrics. Higher scores
+            indicate stronger value characteristics. The weights are:
+          </p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>Margin of Safety (25%)</strong> — How far the stock price is below the Graham Number (intrinsic value). Larger discounts score higher.</li>
+            <li><strong>P/E Ratio (15%)</strong> — Price-to-Earnings. Lower is better — Graham preferred P/E under 15.</li>
+            <li><strong>FCF Yield (15%)</strong> — Free Cash Flow relative to market cap. Higher yield = more cash generated per dollar invested.</li>
+            <li><strong>Earnings Yield (10%)</strong> — Inverse of P/E (1/PE). Higher means you're paying less for each dollar of earnings.</li>
+            <li><strong>P/B Ratio (10%)</strong> — Price-to-Book. Lower means you pay less per dollar of net assets. Graham preferred under 1.5.</li>
+            <li><strong>ROE (10%)</strong> — Return on Equity. Measures how efficiently the company turns equity into profit.</li>
+            <li><strong>Debt/Equity (10%)</strong> — Lower debt relative to equity scores higher. Conservative balance sheets are preferred.</li>
+            <li><strong>Dividend Yield (5%)</strong> — Annual income returned to shareholders. A small bonus for dividend payers.</li>
+          </ul>
+        </SubSection>
+        <SubSection title="Column descriptions">
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>#</strong> — Rank by composite score (1 = best value).</li>
+            <li><strong>Score</strong> — The composite value score (0-100). Green = strong (&ge;55), amber = moderate (&ge;35), red = weak.</li>
+            <li><strong>Price</strong> — Current market share price (not intrinsic value).</li>
+            <li><strong>MoS %</strong> — Margin of Safety. Positive (green) = stock trades below the Graham Number. Negative (red) = trades above.</li>
+            <li><strong>P/E</strong> — Price-to-Earnings ratio. Click to sort (lowest first).</li>
+            <li><strong>P/B</strong> — Price-to-Book ratio. Click to sort (lowest first).</li>
+            <li><strong>ROE</strong> — Return on Equity percentage.</li>
+            <li><strong>Div %</strong> — Dividend yield percentage. A dash means no dividend.</li>
+            <li><strong>Flags</strong> — Warning dots (hover to see details). Red = high severity (e.g., negative earnings), amber = medium (e.g., declining revenue), blue = low (e.g., very high P/E).</li>
+          </ul>
+        </SubSection>
+        <SubSection title="Features">
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>Sortable columns</strong> — Click any column header with arrows to sort. P/E and P/B default to ascending (lower is better); all others default to descending.</li>
+            <li><strong>Sector filter</strong> — Use the dropdown to filter by GICS sector (e.g., Technology, Healthcare).</li>
+            <li><strong>Add to Watchlist</strong> — Click the + icon on any row to add it to your personal Watchlist above.</li>
+            <li><strong>Research link</strong> — Click the arrow icon or the ticker name to open the full Research page for that stock.</li>
+            <li><strong>Auto-refresh</strong> — The background scanner re-scores all stocks approximately every hour. The "Updated" timestamp shows when the last scan completed.</li>
+          </ul>
+        </SubSection>
+        <SubSection title="Important notes">
+          <ul className="list-disc pl-5 space-y-1">
+            <li>Scores are based on publicly available market data from Yahoo Finance — not EDGAR filings.</li>
+            <li>High scores do not mean "buy." The screener surfaces candidates for further research, not investment recommendations.</li>
+            <li>Warning flags are informational — distressed or risky stocks are never filtered out, only flagged.</li>
+            <li>Some tickers may show incomplete data if yfinance doesn't have full coverage.</li>
+          </ul>
+        </SubSection>
+      </Section>
+
+      <Section title="4. Company Research">
         <p>
           Search for any publicly traded US company using the search bar in the header. Type a ticker
           symbol (e.g., GOOGL) and select from the results. This opens the <strong>Research</strong> page,
@@ -133,7 +188,7 @@ function UserGuide() {
         </SubSection>
       </Section>
 
-      <Section title="4. Overview Tab">
+      <Section title="5. Overview Tab">
         <p>
           The Overview tab provides a snapshot of the company:
         </p>
@@ -141,13 +196,13 @@ function UserGuide() {
           <li><strong>Key Metrics</strong> — A grid of important financial ratios and figures:
             P/E ratio, P/B ratio, market cap, dividend yield, 52-week high/low, profit margins, ROE, debt-to-equity, and more.
           </li>
-          <li><strong>Graham Score</strong> — Benjamin Graham's evaluation (see section 8 below for details).</li>
-          <li><strong>Growth Lens</strong> — Metrics designed for pre-profit or high-growth companies (see section 9).</li>
+          <li><strong>Graham Score</strong> — Benjamin Graham's evaluation (see section 9 below for details).</li>
+          <li><strong>Growth Lens</strong> — Metrics designed for pre-profit or high-growth companies (see section 10).</li>
           <li><strong>Price chart</strong> — Historical stock price visualization.</li>
         </ul>
       </Section>
 
-      <Section title="5. Financial Statements">
+      <Section title="6. Financial Statements">
         <p>
           The <strong>Financials</strong> tab shows structured financial data sourced from SEC EDGAR's XBRL database.
         </p>
@@ -172,7 +227,7 @@ function UserGuide() {
         </SubSection>
       </Section>
 
-      <Section title="6. SEC Filings">
+      <Section title="7. SEC Filings">
         <p>
           The <strong>Filings</strong> tab lists all SEC filings for the company. You can filter by type:
         </p>
@@ -187,7 +242,7 @@ function UserGuide() {
         </p>
       </Section>
 
-      <Section title="7. Valuation Tools">
+      <Section title="8. Valuation Tools">
         <p>
           The <strong>Valuation</strong> tab provides two analytical models for estimating a stock's intrinsic value.
         </p>
@@ -237,7 +292,7 @@ function UserGuide() {
         </SubSection>
       </Section>
 
-      <Section title="8. Graham Score">
+      <Section title="9. Graham Score">
         <p>
           The Graham Score evaluates a stock against Benjamin Graham's 7 criteria for defensive investors,
           as described in <em>The Intelligent Investor</em>. Each criterion is shown with a green checkmark
@@ -274,7 +329,7 @@ function UserGuide() {
         </SubSection>
       </Section>
 
-      <Section title="9. Growth Lens">
+      <Section title="10. Growth Lens">
         <p>
           The Growth Lens appears on the Overview tab and provides metrics specifically designed for
           <strong> pre-profit and high-growth companies</strong> (like JOBY or early-stage tech companies)
@@ -294,7 +349,7 @@ function UserGuide() {
         </SubSection>
       </Section>
 
-      <Section title="10. Data Sources & Freshness">
+      <Section title="11. Data Sources & Freshness">
         <p>
           Investron uses two primary data sources, both free and publicly available:
         </p>
