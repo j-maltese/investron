@@ -64,10 +64,11 @@ function scoreBgClass(score: number): string {
 /**
  * HeaderTooltip — CSS-only tooltip shown on hover for column header descriptions.
  * Uses the same group-hover pattern as WarningIndicators (no JS state or library).
+ * Renders BELOW the header (top-full) so it isn't clipped by the scroll container's overflow.
  */
 function HeaderTooltip({ text }: { text: string }) {
   return (
-    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-20 pointer-events-none whitespace-normal w-48">
+    <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 hidden group-hover:block z-30 pointer-events-none whitespace-normal w-48">
       <div className="bg-[var(--card)] border border-[var(--border)] rounded-lg px-3 py-2 text-xs text-[var(--foreground)] shadow-lg font-normal text-left">
         {text}
       </div>
@@ -386,9 +387,9 @@ export function ValueScreener() {
         </div>
       ) : (
         <>
-          <div className="overflow-x-auto">
+          <div className="overflow-auto max-h-[600px]">
             <table className="w-full text-sm">
-              <thead>
+              <thead className="sticky top-0 z-10 bg-[var(--card)]">
                 <tr className="border-b border-[var(--border)]">
                   <StaticHeader label="#" align="center" tooltip="Rank by composite value score (1 = best)" />
                   <StaticHeader label="Ticker" align="left" />
