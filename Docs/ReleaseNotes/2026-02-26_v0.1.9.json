@@ -1,0 +1,15 @@
+{
+  "version": "0.1.9",
+  "date": "2026-02-26",
+  "title": "v0.1.9",
+  "summary": "Release 0.1.9 includes 1 new feature.",
+  "sections": [
+    {
+      "type": "new_feature",
+      "label": "New Features",
+      "items": [
+        "Add multi-index support to Value Screener"
+      ]
+    }
+  ]
+}
