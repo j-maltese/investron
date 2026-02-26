@@ -1,0 +1,15 @@
+{
+  "version": "0.1.8",
+  "date": "2026-02-26",
+  "title": "v0.1.8",
+  "summary": "Release 0.1.8 includes 1 new feature.",
+  "sections": [
+    {
+      "type": "new_feature",
+      "label": "New Features",
+      "items": [
+        "Add column header tooltips and Value Screener user guide"
+      ]
+    }
+  ]
+}
