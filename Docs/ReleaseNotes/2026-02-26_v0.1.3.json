@@ -1,0 +1,22 @@
+{
+  "version": "0.1.3",
+  "date": "2026-02-26",
+  "title": "v0.1.3",
+  "summary": "Release 0.1.3 includes 1 new feature, 1 enhancement.",
+  "sections": [
+    {
+      "type": "new_feature",
+      "label": "New Features",
+      "items": [
+        "Add Value Screener with background S&P 500 scanner"
+      ]
+    },
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Updates Dockerfile and release notes integration"
+      ]
+    }
+  ]
+}
