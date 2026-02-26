@@ -270,8 +270,8 @@ async def scanner_loop() -> None:
     settings = get_settings()
     logger.info("Background scanner starting (interval=%ds)...", settings.scanner_interval_seconds)
 
-    # Initial delay: let the app fully start and DB connections warm up
-    await asyncio.sleep(10)
+    # Brief delay: let the app finish starting and DB connections warm up
+    await asyncio.sleep(2)
 
     while True:
         try:
