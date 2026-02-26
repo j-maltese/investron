@@ -3,6 +3,7 @@ import type {
   CompanySearchResult, Company, FinancialStatementsResponse, KeyMetrics,
   GrahamScoreResponse, GrowthMetrics, FilingsResponse, DCFInput, DCFResult,
   ScenarioModelInput, ScenarioResult, WatchlistItem, Alert, ReleaseNotesResponse,
+  ScreenerResultsResponse, ScannerStatus,
 } from './types'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
@@ -96,4 +97,30 @@ export const api = {
   // Release Notes
   getReleaseNotes: () =>
     apiFetch<ReleaseNotesResponse>('/api/release-notes'),
+
+  // Value Screener
+  getScreenerResults: (params?: {
+    sort_by?: string
+    sort_order?: 'asc' | 'desc'
+    sector?: string
+    min_score?: number
+    limit?: number
+    offset?: number
+  }) => {
+    const searchParams = new URLSearchParams()
+    if (params?.sort_by) searchParams.set('sort_by', params.sort_by)
+    if (params?.sort_order) searchParams.set('sort_order', params.sort_order)
+    if (params?.sector) searchParams.set('sector', params.sector)
+    if (params?.min_score != null) searchParams.set('min_score', String(params.min_score))
+    if (params?.limit) searchParams.set('limit', String(params.limit))
+    if (params?.offset) searchParams.set('offset', String(params.offset))
+    const qs = searchParams.toString()
+    return apiFetch<ScreenerResultsResponse>(`/api/screener/results${qs ? `?${qs}` : ''}`)
+  },
+
+  getScannerStatus: () =>
+    apiFetch<ScannerStatus>('/api/screener/status'),
+
+  getScreenerSectors: () =>
+    apiFetch<{ sectors: string[] }>('/api/screener/sectors'),
 }

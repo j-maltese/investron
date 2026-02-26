@@ -1,11 +1,13 @@
+import asyncio
 import pathlib
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.models.database import init_db
-from app.api import companies, financials, filings, watchlist, valuation, release_notes
+from app.api import companies, financials, filings, watchlist, valuation, release_notes, screener
 from app.auth import routes as auth_routes
+from app.services.scanner import scanner_loop
 
 # Read version from VERSION file at repo root
 _version = "0.0.0"
@@ -19,10 +21,33 @@ for _candidate in [
         break
 
 
+# Background scanner task reference — kept at module level so we can cancel on shutdown
+_scanner_task: asyncio.Task | None = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """FastAPI lifespan: initialize DB and optionally start the background scanner.
+
+    The scanner runs as an asyncio task for the lifetime of the app, continuously
+    scoring S&P 500 stocks even when no users are logged in.
+    """
+    global _scanner_task
     init_db()
+
+    settings = get_settings()
+    if settings.scanner_enabled:
+        _scanner_task = asyncio.create_task(scanner_loop())
+
     yield
+
+    # Graceful shutdown: cancel the scanner if it's running
+    if _scanner_task and not _scanner_task.done():
+        _scanner_task.cancel()
+        try:
+            await _scanner_task
+        except asyncio.CancelledError:
+            pass
 
 
 settings = get_settings()
@@ -49,6 +74,7 @@ app.include_router(filings.router, prefix="/api/filings", tags=["filings"])
 app.include_router(watchlist.router, prefix="/api/watchlist", tags=["watchlist"])
 app.include_router(valuation.router, prefix="/api/valuation", tags=["valuation"])
 app.include_router(release_notes.router, prefix="/api/release-notes", tags=["release-notes"])
+app.include_router(screener.router, prefix="/api/screener", tags=["screener"])
 
 
 @app.get("/health")

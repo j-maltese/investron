@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { Plus, Trash2, AlertTriangle, ExternalLink } from 'lucide-react'
 import { PageLayout } from '@/components/layout/PageLayout'
 import { useWatchlist, useAlerts, useAddToWatchlist, useRemoveFromWatchlist } from '@/hooks/useWatchlist'
+import { ValueScreener } from '@/components/dashboard/ValueScreener'
 
 function formatCurrency(value?: number | null): string {
   if (value == null) return 'N/A'
@@ -143,6 +144,9 @@ export function Dashboard() {
             </div>
           )}
         </div>
+
+        {/* Value Screener — shows ranked S&P 500 stocks by composite value score */}
+        <ValueScreener />
       </div>
     </PageLayout>
   )
