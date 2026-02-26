@@ -11,7 +11,7 @@
  * so the "Scanning..." progress indicator stays responsive.
  */
 
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 
 /** Parameters for filtering/sorting screener results */
@@ -33,6 +33,7 @@ export function useScreenerResults(params?: ScreenerParams) {
   return useQuery({
     queryKey: ['screener-results', params],
     queryFn: () => api.getScreenerResults(params),
+    placeholderData: keepPreviousData,  // keep old rows visible while loading more (no scroll jump)
     staleTime: 5 * 60_000,        // 5 min — data only changes on scan completion
     refetchInterval: 10 * 60_000,  // Auto-refresh every 10 min while tab is open
   })

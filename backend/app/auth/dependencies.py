@@ -1,22 +1,49 @@
+import logging
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from app.config import get_settings
 
-security = HTTPBearer()
+logger = logging.getLogger(__name__)
+
+# auto_error=False so missing tokens don't 403 before we can check DEBUG mode
+security = HTTPBearer(auto_error=False)
+
+# Hardcoded dev user returned when DEBUG=true — safe because DEBUG is never
+# true in production (Railway doesn't set it).
+_DEV_USER = {
+    "id": "dev-user-001",
+    "email": "dev@investron.local",
+    "role": "authenticated",
+}
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> dict:
-    """Validate Supabase JWT token and return user info."""
-    settings = get_settings()
-    token = credentials.credentials
+    """Validate Supabase JWT token and return user info.
 
+    When DEBUG=true, skips JWT verification and returns a hardcoded test user
+    so the full app works locally without a Supabase account.
+    """
+    settings = get_settings()
+
+    # Dev bypass: return fake user without any token validation
+    if settings.debug:
+        logger.debug("DEBUG mode: returning dev user (JWT verification skipped)")
+        return _DEV_USER
+
+    # Production: require and validate JWT
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token = credentials.credentials
     try:
-        # Supabase JWTs use the JWT secret derived from the project
-        # For now, we decode without full verification for development
-        # In production, verify with Supabase's JWKS endpoint
         payload = jwt.decode(
             token,
             settings.supabase_publishable_key,

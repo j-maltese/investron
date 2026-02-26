@@ -9,6 +9,9 @@ import type {
 const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
+  // No Supabase in local dev — backend uses DEBUG auth bypass instead
+  if (!supabase) return {}
+
   const { data: { session } } = await supabase.auth.getSession()
   if (session?.access_token) {
     return { Authorization: `Bearer ${session.access_token}` }

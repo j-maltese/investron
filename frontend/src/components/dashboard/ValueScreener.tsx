@@ -14,7 +14,8 @@
  *   - WarningIndicators: Colored dots with hover tooltip showing warning messages
  */
 
-import { useState } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import {
   TrendingDown, Clock, Plus, ExternalLink,
@@ -62,16 +63,38 @@ function scoreBgClass(score: number): string {
 // ============================================================================
 
 /**
- * HeaderTooltip — CSS-only tooltip shown on hover for column header descriptions.
- * Uses the same group-hover pattern as WarningIndicators (no JS state or library).
+ * HeaderTooltip — renders above the header via a portal so it escapes the
+ * scroll container's overflow-auto clipping. Uses fixed positioning
+ * calculated from the parent's bounding rect on hover.
  */
 function HeaderTooltip({ text }: { text: string }) {
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
+  const parentRef = useRef<HTMLDivElement>(null)
+
+  const show = useCallback(() => {
+    const el = parentRef.current?.parentElement
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    setPos({ top: rect.top - 8, left: rect.left + rect.width / 2 })
+  }, [])
+
+  const hide = useCallback(() => setPos(null), [])
+
   return (
-    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-20 pointer-events-none whitespace-normal w-48">
-      <div className="bg-[var(--card)] border border-[var(--border)] rounded-lg px-3 py-2 text-xs text-[var(--foreground)] shadow-lg font-normal text-left">
-        {text}
-      </div>
-    </div>
+    <>
+      <div ref={parentRef} className="absolute inset-0" onMouseEnter={show} onMouseLeave={hide} />
+      {pos && createPortal(
+        <div
+          className="fixed z-50 pointer-events-none -translate-x-1/2 -translate-y-full w-48"
+          style={{ top: pos.top, left: pos.left }}
+        >
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-lg px-3 py-2 text-xs text-[var(--foreground)] shadow-lg font-normal text-left">
+            {text}
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
   )
 }
 
@@ -274,6 +297,9 @@ export function ValueScreener() {
   const [indexFilter, setIndexFilter] = useState<string | undefined>()
   const [showCount, setShowCount] = useState(25)
 
+  // Infinite scroll sentinel ref — observer is set up after data hooks below
+  const sentinelRef = useRef<HTMLTableRowElement>(null)
+
   // Data hooks
   const { data, isLoading } = useScreenerResults({
     sort_by: sortBy,
@@ -286,6 +312,26 @@ export function ValueScreener() {
   const { data: sectorsData } = useScreenerSectors()
   const { data: indicesData } = useScreenerIndices()
   const addMutation = useAddToWatchlist()
+
+  // Infinite scroll: observe the sentinel row at the bottom of the table.
+  // When it enters the scroll container viewport, load 25 more rows.
+  const hasMore = (data?.total_count ?? 0) > showCount
+  useEffect(() => {
+    const el = sentinelRef.current
+    if (!el || !hasMore) return
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setShowCount(prev => prev + 25)
+        }
+      },
+      { root: el.closest('.overflow-auto'), rootMargin: '100px' }
+    )
+
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [data, hasMore, showCount])
 
   /**
    * Handle column sort clicks.
@@ -386,9 +432,9 @@ export function ValueScreener() {
         </div>
       ) : (
         <>
-          <div className="overflow-x-auto">
+          <div className="overflow-auto max-h-[600px]">
             <table className="w-full text-sm">
-              <thead>
+              <thead className="sticky top-0 z-10 bg-[var(--card)]">
                 <tr className="border-b border-[var(--border)]">
                   <StaticHeader label="#" align="center" tooltip="Rank by composite value score (1 = best)" />
                   <StaticHeader label="Ticker" align="left" />
@@ -411,21 +457,17 @@ export function ValueScreener() {
                     onAddToWatchlist={(ticker) => addMutation.mutate({ ticker })}
                   />
                 ))}
+                {/* Sentinel row: triggers IntersectionObserver to load more */}
+                {hasMore && (
+                  <tr ref={sentinelRef}>
+                    <td colSpan={11} className="py-2 text-center text-xs text-[var(--muted-foreground)]">
+                      Loading...
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
-
-          {/* "Show more" pagination — loads 25 more at a time */}
-          {data.total_count > showCount && (
-            <div className="text-center mt-3">
-              <button
-                className="btn-secondary text-sm"
-                onClick={() => setShowCount(prev => prev + 25)}
-              >
-                Show more ({data.total_count - showCount} remaining)
-              </button>
-            </div>
-          )}
         </>
       )}
     </div>
