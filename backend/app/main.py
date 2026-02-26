@@ -10,6 +10,10 @@ from app.api import companies, financials, filings, watchlist, valuation, releas
 from app.auth import routes as auth_routes
 from app.services.scanner import scanner_loop
 
+# Configure root logger so all app.* loggers emit to stdout.
+# Uvicorn only configures its own loggers; without this, our scanner/screener
+# log calls are silently swallowed.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:  %(name)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Read version from VERSION file at repo root
