@@ -1,0 +1,15 @@
+{
+  "version": "0.1.6",
+  "date": "2026-02-26",
+  "title": "v0.1.6",
+  "summary": "Release 0.1.6 includes 1 enhancement.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Configure root logger so app log messages appear in Railway"
+      ]
+    }
+  ]
+}
