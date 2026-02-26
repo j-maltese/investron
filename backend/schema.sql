@@ -75,3 +75,83 @@ CREATE TABLE IF NOT EXISTS saved_scenarios (
 );
 
 CREATE INDEX IF NOT EXISTS idx_scenarios_company ON saved_scenarios(company_id);
+
+-- Value Screener: pre-computed scores for ranked stock discovery
+-- Stores both raw yfinance metrics and derived score components so the API
+-- serves results instantly without re-computation on every request.
+CREATE TABLE IF NOT EXISTS screener_scores (
+    id SERIAL PRIMARY KEY,
+    ticker VARCHAR(10) NOT NULL UNIQUE,
+    company_name VARCHAR(255),
+    sector VARCHAR(100),
+    industry VARCHAR(100),
+
+    -- Raw metrics snapshot (from yfinance .info dict, single API call per ticker)
+    price DECIMAL(12,4),
+    market_cap BIGINT,
+    pe_ratio DECIMAL(10,2),
+    forward_pe DECIMAL(10,2),
+    pb_ratio DECIMAL(10,2),
+    ps_ratio DECIMAL(10,2),
+    debt_to_equity DECIMAL(10,2),
+    current_ratio DECIMAL(10,4),
+    roe DECIMAL(10,6),
+    eps DECIMAL(10,4),
+    book_value DECIMAL(12,4),
+    free_cash_flow BIGINT,
+    total_revenue BIGINT,
+    dividend_yield DECIMAL(10,6),
+    revenue_growth DECIMAL(10,6),
+    earnings_growth DECIMAL(10,6),
+    net_margin DECIMAL(10,6),
+    beta DECIMAL(6,4),
+    fifty_two_week_high DECIMAL(12,4),
+    fifty_two_week_low DECIMAL(12,4),
+
+    -- Derived value scores (each 0.0-1.0, computed by screener.py)
+    graham_number DECIMAL(12,4),
+    margin_of_safety DECIMAL(10,4),       -- raw % (positive = undervalued)
+    pe_score DECIMAL(6,4),
+    pb_score DECIMAL(6,4),
+    roe_score DECIMAL(6,4),
+    debt_equity_score DECIMAL(6,4),
+    fcf_yield DECIMAL(10,6),              -- raw FCF/market_cap ratio
+    fcf_yield_score DECIMAL(6,4),
+    earnings_yield DECIMAL(10,6),         -- raw 1/PE ratio
+    earnings_yield_score DECIMAL(6,4),
+    dividend_score DECIMAL(6,4),
+    margin_of_safety_score DECIMAL(6,4),
+
+    -- Composite: weighted blend of component scores, scaled 0-100
+    composite_score DECIMAL(6,2),
+    rank INT,                             -- 1 = best value, recomputed after each scan
+
+    -- Warning flags as JSONB array: [{code, severity, message}, ...]
+    -- Warnings inform but never filter — distressed stocks stay in results
+    warnings JSONB DEFAULT '[]'::jsonb,
+
+    -- When this row was last scored and when the underlying metrics were fetched
+    scored_at TIMESTAMPTZ DEFAULT NOW(),
+    metrics_fetched_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_screener_composite ON screener_scores(composite_score DESC);
+CREATE INDEX IF NOT EXISTS idx_screener_rank ON screener_scores(rank ASC);
+CREATE INDEX IF NOT EXISTS idx_screener_sector ON screener_scores(sector);
+
+-- Scanner status: single-row table tracking background scan progress.
+-- The CHECK constraint on id ensures only one row ever exists.
+CREATE TABLE IF NOT EXISTS scanner_status (
+    id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    is_running BOOLEAN DEFAULT FALSE,
+    current_ticker VARCHAR(10),
+    tickers_scanned INT DEFAULT 0,
+    tickers_total INT DEFAULT 0,
+    last_full_scan_started_at TIMESTAMPTZ,
+    last_full_scan_completed_at TIMESTAMPTZ,
+    last_error TEXT,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Seed the single status row (idempotent)
+INSERT INTO scanner_status (id) VALUES (1) ON CONFLICT DO NOTHING;

@@ -192,3 +192,48 @@ export interface ReleaseNote {
 export interface ReleaseNotesResponse {
   releases: ReleaseNote[]
 }
+
+// Value Screener
+export interface ScreenerWarning {
+  code: string
+  severity: 'high' | 'medium' | 'low'
+  message: string
+}
+
+export interface ScreenerScore {
+  ticker: string
+  company_name?: string
+  sector?: string
+  industry?: string
+  price?: number
+  market_cap?: number
+  pe_ratio?: number
+  pb_ratio?: number
+  roe?: number
+  debt_to_equity?: number
+  dividend_yield?: number
+  graham_number?: number
+  margin_of_safety?: number
+  fcf_yield?: number
+  earnings_yield?: number
+  composite_score: number
+  rank?: number
+  warnings: ScreenerWarning[]
+  scored_at?: string
+}
+
+export interface ScreenerResultsResponse {
+  results: ScreenerScore[]
+  total_count: number
+  last_scan_completed_at?: string
+}
+
+export interface ScannerStatus {
+  is_running: boolean
+  tickers_scanned: number
+  tickers_total: number
+  current_ticker?: string
+  last_full_scan_started_at?: string
+  last_full_scan_completed_at?: string
+  last_error?: string
+}

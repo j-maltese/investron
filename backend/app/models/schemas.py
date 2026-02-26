@@ -208,3 +208,62 @@ class ReleaseNote(BaseModel):
 
 class ReleaseNotesResponse(BaseModel):
     releases: list[ReleaseNote]
+
+
+# --- Value Screener ---
+
+class ScreenerWarning(BaseModel):
+    """A single warning flag on a screened stock (e.g., high debt, negative earnings)."""
+    code: str               # Machine-readable identifier (e.g., "high_debt")
+    severity: str           # "high" | "medium" | "low"
+    message: str            # Human-readable explanation for tooltip display
+
+
+class ScreenerScoreResponse(BaseModel):
+    """A single stock's screener result — displayed as one row in the Value Screener table."""
+    ticker: str
+    company_name: Optional[str] = None
+    sector: Optional[str] = None
+    industry: Optional[str] = None
+
+    # Key metrics for display columns
+    price: Optional[float] = None
+    market_cap: Optional[float] = None
+    pe_ratio: Optional[float] = None
+    pb_ratio: Optional[float] = None
+    roe: Optional[float] = None
+    debt_to_equity: Optional[float] = None
+    dividend_yield: Optional[float] = None
+
+    # Value indicators
+    graham_number: Optional[float] = None
+    margin_of_safety: Optional[float] = None  # % — positive = undervalued
+    fcf_yield: Optional[float] = None
+    earnings_yield: Optional[float] = None
+
+    # Composite ranking
+    composite_score: float          # 0-100 weighted blend
+    rank: Optional[int] = None      # 1 = best value
+
+    # Warning flags (informational, not filters)
+    warnings: list[ScreenerWarning] = []
+
+    scored_at: Optional[datetime] = None
+
+
+class ScreenerResultsResponse(BaseModel):
+    """Paginated response from GET /api/screener/results."""
+    results: list[ScreenerScoreResponse]
+    total_count: int
+    last_scan_completed_at: Optional[datetime] = None
+
+
+class ScannerStatusResponse(BaseModel):
+    """Current state of the background scanner — for progress display."""
+    is_running: bool
+    tickers_scanned: int
+    tickers_total: int
+    current_ticker: Optional[str] = None
+    last_full_scan_started_at: Optional[datetime] = None
+    last_full_scan_completed_at: Optional[datetime] = None
+    last_error: Optional[str] = None
