@@ -1,0 +1,15 @@
+{
+  "version": "0.1.7",
+  "date": "2026-02-26",
+  "title": "v0.1.7",
+  "summary": "Release 0.1.7 includes 1 bug fix.",
+  "sections": [
+    {
+      "type": "bug_fix",
+      "label": "Bug Fixes",
+      "items": [
+        "Remove unused formatMarketCap to fix Vercel build"
+      ]
+    }
+  ]
+}
