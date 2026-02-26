@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import pathlib
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -8,6 +9,8 @@ from app.models.database import init_db
 from app.api import companies, financials, filings, watchlist, valuation, release_notes, screener
 from app.auth import routes as auth_routes
 from app.services.scanner import scanner_loop
+
+logger = logging.getLogger(__name__)
 
 # Read version from VERSION file at repo root
 _version = "0.0.0"
@@ -37,7 +40,10 @@ async def lifespan(app: FastAPI):
 
     settings = get_settings()
     if settings.scanner_enabled:
+        logger.info("Starting background scanner task...")
         _scanner_task = asyncio.create_task(scanner_loop())
+    else:
+        logger.info("Background scanner is disabled (SCANNER_ENABLED=false)")
 
     yield
 
