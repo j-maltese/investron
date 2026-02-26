@@ -34,14 +34,6 @@ function formatCurrency(value?: number | null): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value)
 }
 
-/** Format a number as compact market cap (e.g., $1.2T, $450B, $12.3M) */
-function formatMarketCap(value?: number | null): string {
-  if (value == null) return 'N/A'
-  if (value >= 1e12) return `$${(value / 1e12).toFixed(1)}T`
-  if (value >= 1e9) return `$${(value / 1e9).toFixed(1)}B`
-  if (value >= 1e6) return `$${(value / 1e6).toFixed(0)}M`
-  return `$${value.toLocaleString()}`
-}
 
 /**
  * Map composite score to a color class.
