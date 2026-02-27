@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     cache_ttl_prices: int = 900  # 15 minutes
     cache_ttl_company_info: int = 604800  # 7 days
 
+    # AI / OpenAI
+    openai_api_key: str = ""          # Empty = AI features disabled (returns 503)
+    openai_model: str = "gpt-4.1"
+    ai_max_tokens: int = 4096
+
     # Value Screener background scanner settings
     # All configurable via env vars (e.g. SCANNER_ENABLED=false for local dev)
     scanner_enabled: bool = True          # Set False to disable background scanning
