@@ -1,0 +1,15 @@
+{
+  "version": "0.1.13",
+  "date": "2026-02-27",
+  "title": "v0.1.13",
+  "summary": "Release 0.1.13 includes 1 enhancement.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Fixes JWT Auth"
+      ]
+    }
+  ]
+}
