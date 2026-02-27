@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_publishable_key: str = ""
     supabase_secret_key: str = ""
+    supabase_jwt_secret: str = ""  # JWT signing secret (Supabase dashboard → Settings → API → JWT Secret)
     database_url: str = ""
 
     # SEC EDGAR

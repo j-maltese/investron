@@ -43,10 +43,12 @@ async def get_current_user(
         )
 
     token = credentials.credentials
+    # Supabase signs JWTs with the JWT Secret, not the anon/service keys
+    jwt_secret = settings.supabase_jwt_secret or settings.supabase_publishable_key
     try:
         payload = jwt.decode(
             token,
-            settings.supabase_publishable_key,
+            jwt_secret,
             algorithms=["HS256"],
             options={"verify_aud": False},
         )
