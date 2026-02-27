@@ -1,0 +1,15 @@
+{
+  "version": "0.1.11",
+  "date": "2026-02-27",
+  "title": "v0.1.11",
+  "summary": "Release 0.1.11 includes 1 enhancement.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "AI Analysis tool and Local Dev Readme"
+      ]
+    }
+  ]
+}
