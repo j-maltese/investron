@@ -3,7 +3,7 @@ import type {
   CompanySearchResult, Company, FinancialStatementsResponse, KeyMetrics,
   GrahamScoreResponse, GrowthMetrics, FilingsResponse, DCFInput, DCFResult,
   ScenarioModelInput, ScenarioResult, WatchlistItem, Alert, ReleaseNotesResponse,
-  ScreenerResultsResponse, ScannerStatus,
+  ScreenerResultsResponse, ScannerStatus, ChatRequest,
 } from './types'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
@@ -131,4 +131,42 @@ export const api = {
 
   getScreenerIndices: () =>
     apiFetch<{ indices: string[] }>('/api/screener/indices'),
+
+  // AI Chat — raw SSE stream (not apiFetch, which expects JSON)
+  streamAIChat: async function* (
+    request: ChatRequest,
+    signal?: AbortSignal,
+  ): AsyncGenerator<{ token?: string; done?: boolean; error?: string }> {
+    const headers = await getAuthHeaders()
+    const res = await fetch(`${API_BASE}/api/ai/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify(request),
+      signal,
+    })
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      throw new Error(err.detail || `API error: ${res.status}`)
+    }
+
+    const reader = res.body!.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          yield JSON.parse(line.slice(6))
+        }
+      }
+    }
+  },
 }

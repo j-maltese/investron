@@ -6,14 +6,16 @@ import { OverviewTab } from '@/components/research/OverviewTab'
 import { FinancialsTab } from '@/components/research/FinancialsTab'
 import { FilingsTab } from '@/components/research/FilingsTab'
 import { ValuationTab } from '@/components/research/ValuationTab'
+import { AIAnalysisTab } from '@/components/research/AIAnalysisTab'
 
-type Tab = 'overview' | 'financials' | 'filings' | 'valuation'
+type Tab = 'overview' | 'financials' | 'filings' | 'valuation' | 'ai'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'overview', label: 'Overview' },
   { key: 'financials', label: 'Financials' },
   { key: 'filings', label: 'Filings' },
   { key: 'valuation', label: 'Valuation' },
+  { key: 'ai', label: 'AI Analysis' },
 ]
 
 function formatLargeNumber(value?: number | null): string {
@@ -92,6 +94,7 @@ export function Research() {
           {activeTab === 'financials' && <FinancialsTab ticker={ticker} />}
           {activeTab === 'filings' && <FilingsTab ticker={ticker} />}
           {activeTab === 'valuation' && <ValuationTab ticker={ticker} />}
+          {activeTab === 'ai' && <AIAnalysisTab ticker={ticker} />}
         </div>
       </div>
     </PageLayout>

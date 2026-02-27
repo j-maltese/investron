@@ -238,3 +238,19 @@ export interface ScannerStatus {
   last_full_scan_completed_at?: string
   last_error?: string
 }
+
+// AI Chat
+export interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  timestamp: number
+  isStreaming?: boolean
+}
+
+export interface ChatRequest {
+  ticker: string
+  messages: { role: string; content: string }[]
+  include_financials?: boolean
+  include_growth?: boolean
+}

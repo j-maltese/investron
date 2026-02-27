@@ -126,6 +126,26 @@ Password: postgres
 Database: investron
 ```
 
+## Deploying to Production
+
+Work on the `dev` branch, then create a PR to `main` when ready:
+
+```bash
+git push origin dev
+gh pr create --base main --head dev --title "Brief description of changes" --body "Details here"
+```
+
+After review, merge from the CLI or GitHub:
+
+```bash
+gh pr merge --squash
+```
+
+Merging to `main` automatically triggers:
+- **Vercel** deploys the frontend
+- **Railway** deploys the backend
+- **GitHub Action** generates release notes and creates a version tag
+
 ## Troubleshooting
 
 **CORS errors (OPTIONS 400)**
