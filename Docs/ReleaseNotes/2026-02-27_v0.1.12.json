@@ -1,0 +1,15 @@
+{
+  "version": "0.1.12",
+  "date": "2026-02-27",
+  "title": "v0.1.12",
+  "summary": "Release 0.1.12 includes 1 enhancement.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Fixes 401 auth issue with AI Analysis service"
+      ]
+    }
+  ]
+}
