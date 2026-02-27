@@ -1,5 +1,7 @@
 import logging
+import time
 
+import httpx
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
@@ -18,6 +20,48 @@ _DEV_USER = {
     "role": "authenticated",
 }
 
+# ---------------------------------------------------------------------------
+# JWKS cache — Supabase publishes signing keys at a well-known endpoint.
+# We cache for 5 minutes to avoid fetching on every request.
+# ---------------------------------------------------------------------------
+_jwks_cache: dict | None = None
+_jwks_fetched_at: float = 0
+_JWKS_TTL = 300  # seconds
+
+
+async def _get_supabase_jwks(supabase_url: str) -> dict:
+    """Fetch and cache Supabase's public JWKS (signing keys)."""
+    global _jwks_cache, _jwks_fetched_at
+    now = time.time()
+    if _jwks_cache and (now - _jwks_fetched_at) < _JWKS_TTL:
+        return _jwks_cache
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{supabase_url}/auth/v1/.well-known/jwks.json",
+            timeout=10,
+        )
+        resp.raise_for_status()
+        _jwks_cache = resp.json()
+        _jwks_fetched_at = now
+        logger.info(f"Fetched JWKS from Supabase ({len(_jwks_cache.get('keys', []))} keys)")
+        return _jwks_cache
+
+
+def _extract_user(payload: dict) -> dict:
+    """Extract user info from a verified JWT payload."""
+    user_id = payload.get("sub")
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token: missing user ID",
+        )
+    return {
+        "id": user_id,
+        "email": payload.get("email"),
+        "role": payload.get("role"),
+    }
+
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
@@ -26,6 +70,8 @@ async def get_current_user(
 
     When DEBUG=true, skips JWT verification and returns a hardcoded test user
     so the full app works locally without a Supabase account.
+
+    Supports both modern JWKS verification (ES256/RS256) and legacy HS256.
     """
     settings = get_settings()
 
@@ -43,28 +89,45 @@ async def get_current_user(
         )
 
     token = credentials.credentials
-    # Supabase signs JWTs with the JWT Secret, not the anon/service keys
+    header = jwt.get_unverified_header(token)
+    kid = header.get("kid")
+    alg = header.get("alg", "HS256")
+
+    # Strategy 1: JWKS-based verification (ES256, RS256, etc.)
+    # Supabase publishes signing keys at {url}/auth/v1/.well-known/jwks.json
+    if kid and settings.supabase_url:
+        try:
+            jwks = await _get_supabase_jwks(settings.supabase_url)
+            for key in jwks.get("keys", []):
+                if key.get("kid") == kid:
+                    payload = jwt.decode(
+                        token,
+                        key,
+                        algorithms=[alg, "ES256", "RS256", "HS256"],
+                        options={"verify_aud": False},
+                    )
+                    return _extract_user(payload)
+            logger.warning(f"No JWKS key matched kid={kid}")
+        except JWTError as e:
+            logger.error(f"JWKS verification failed: {e}")
+        except Exception as e:
+            logger.error(f"JWKS fetch/parse error: {e}")
+
+    # Strategy 2: Legacy HS256 with JWT secret
     jwt_secret = settings.supabase_jwt_secret or settings.supabase_publishable_key
-    try:
-        payload = jwt.decode(
-            token,
-            jwt_secret,
-            algorithms=["HS256"],
-            options={"verify_aud": False},
-        )
-        user_id = payload.get("sub")
-        if user_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token: missing user ID",
+    if jwt_secret:
+        try:
+            payload = jwt.decode(
+                token,
+                jwt_secret,
+                algorithms=["HS256"],
+                options={"verify_aud": False},
             )
-        return {
-            "id": user_id,
-            "email": payload.get("email"),
-            "role": payload.get("role"),
-        }
-    except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-        )
+            return _extract_user(payload)
+        except JWTError as e:
+            logger.error(f"HS256 fallback failed: {e} | secret_source={'jwt_secret' if settings.supabase_jwt_secret else 'publishable_key'}")
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired token",
+    )
