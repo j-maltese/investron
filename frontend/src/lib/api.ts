@@ -3,7 +3,7 @@ import type {
   CompanySearchResult, Company, FinancialStatementsResponse, KeyMetrics,
   GrahamScoreResponse, GrowthMetrics, FilingsResponse, DCFInput, DCFResult,
   ScenarioModelInput, ScenarioResult, WatchlistItem, Alert, ReleaseNotesResponse,
-  ScreenerResultsResponse, ScannerStatus, ChatRequest,
+  ScreenerResultsResponse, ScannerStatus, ChatRequest, FilingIndexStatus,
 } from './types'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
@@ -132,11 +132,25 @@ export const api = {
   getScreenerIndices: () =>
     apiFetch<{ indices: string[] }>('/api/screener/indices'),
 
+  // Filing Indexing
+  getFilingIndexStatus: (ticker: string) =>
+    apiFetch<FilingIndexStatus>(`/api/ai/filings/${ticker}/status`),
+
+  triggerFilingIndex: (ticker: string) =>
+    apiFetch<{ message: string; ticker: string }>(`/api/ai/filings/${ticker}/index`, {
+      method: 'POST',
+    }),
+
+  deleteFilingIndex: (ticker: string) =>
+    apiFetch<{ message: string }>(`/api/ai/filings/${ticker}/index`, {
+      method: 'DELETE',
+    }),
+
   // AI Chat — raw SSE stream (not apiFetch, which expects JSON)
   streamAIChat: async function* (
     request: ChatRequest,
     signal?: AbortSignal,
-  ): AsyncGenerator<{ token?: string; done?: boolean; error?: string }> {
+  ): AsyncGenerator<{ token?: string; done?: boolean; error?: string; status?: string }> {
     const headers = await getAuthHeaders()
     const res = await fetch(`${API_BASE}/api/ai/chat`, {
       method: 'POST',

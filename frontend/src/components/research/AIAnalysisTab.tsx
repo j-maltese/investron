@@ -11,23 +11,32 @@ import { useState, useEffect, useRef, type KeyboardEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useAIChat } from '@/hooks/useAIChat'
-import { Send, Square, Trash2, Sparkles, AlertCircle } from 'lucide-react'
+import { useFilingIndex } from '@/hooks/useFilingIndex'
+import { Send, Square, Trash2, Sparkles, AlertCircle, Search, FileText, RefreshCw, Loader2 } from 'lucide-react'
 
 interface AIAnalysisTabProps {
   ticker: string
 }
 
-const SUGGESTIONS = [
+const BASE_SUGGESTIONS = [
   'What valuation framework fits this company?',
   'Run a Bull / Base / Bear scenario analysis',
   'What are the key risks and catalysts?',
   'Walk me through a DCF analysis',
 ]
 
-function MessageBubble({ role, content, isStreaming }: {
+const FILING_SUGGESTIONS = [
+  'What risk factors does the 10-K mention?',
+  'Summarize the MD&A section',
+  'Any recent acquisitions or material events?',
+  'What does management say about competitive landscape?',
+]
+
+function MessageBubble({ role, content, isStreaming, statusMessage }: {
   role: 'user' | 'assistant'
   content: string
   isStreaming?: boolean
+  statusMessage?: string
 }) {
   if (role === 'user') {
     return (
@@ -42,6 +51,13 @@ function MessageBubble({ role, content, isStreaming }: {
   return (
     <div className="flex justify-start">
       <div className="max-w-[90%] text-sm prose-sm">
+        {/* Tool-call status indicator */}
+        {statusMessage && (
+          <div className="flex items-center gap-2 mb-2 text-xs text-[var(--accent)]">
+            <Search size={12} className="animate-pulse" />
+            <span>{statusMessage}</span>
+          </div>
+        )}
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{
@@ -84,7 +100,7 @@ function MessageBubble({ role, content, isStreaming }: {
         >
           {content}
         </ReactMarkdown>
-        {isStreaming && (
+        {isStreaming && !statusMessage && (
           <span className="inline-block w-2 h-4 bg-[var(--accent)] animate-pulse rounded-sm ml-0.5" />
         )}
       </div>
@@ -92,11 +108,111 @@ function MessageBubble({ role, content, isStreaming }: {
   )
 }
 
+function FilingIndexBanner({ ticker }: { ticker: string }) {
+  const { status, indexStatus, isIndexing, isReady, triggerIndexing, deleteIndex } = useFilingIndex(ticker)
+
+  if (status === 'not_indexed') {
+    return (
+      <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/10 text-xs">
+        <FileText size={14} className="text-blue-400 shrink-0" />
+        <span className="text-blue-300">
+          SEC filings not indexed for deep search.
+        </span>
+        <button
+          onClick={triggerIndexing}
+          className="ml-auto px-2.5 py-1 rounded bg-blue-500/20 text-blue-300 hover:bg-blue-500/30 transition-colors font-medium"
+        >
+          Index Filings
+        </button>
+      </div>
+    )
+  }
+
+  if (isIndexing) {
+    const progress = indexStatus?.progress_message
+    return (
+      <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--accent)]/10 text-xs">
+        <Loader2 size={14} className="text-[var(--accent)] animate-spin shrink-0" />
+        <div className="flex flex-col gap-0.5 min-w-0">
+          <span className="text-[var(--accent)] font-medium">
+            Indexing {ticker.toUpperCase()} filings...
+            {indexStatus && indexStatus.filings_indexed > 0 && (
+              <span className="font-normal opacity-80">
+                {' '}({indexStatus.filings_indexed} indexed, {indexStatus.chunks_total} chunks)
+              </span>
+            )}
+          </span>
+          {progress && (
+            <span
+              key={progress}
+              className="text-[var(--accent)]/70 truncate animate-[fadeSlideIn_0.3s_ease-out]"
+            >
+              {progress}
+            </span>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  if (isReady && indexStatus) {
+    // Build a human-readable breakdown like "3 10-K, 5 10-Q, 7 8-K"
+    const breakdown = indexStatus.filing_type_breakdown
+    const breakdownText = breakdown
+      ? Object.entries(breakdown).map(([type, count]) => `${count} ${type}`).join(', ')
+      : `${indexStatus.filings_indexed} filings`
+
+    return (
+      <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/10 text-xs">
+        <FileText size={14} className="text-emerald-400 shrink-0" />
+        <span className="text-emerald-300">
+          Filing search active — {breakdownText}, {indexStatus.chunks_total} chunks indexed
+        </span>
+        <button
+          onClick={triggerIndexing}
+          className="ml-auto p-1 rounded hover:bg-emerald-500/20 text-emerald-400 transition-colors"
+          title="Re-index filings"
+        >
+          <RefreshCw size={12} />
+        </button>
+        <button
+          onClick={deleteIndex}
+          className="p-1 rounded hover:bg-red-500/20 text-[var(--muted-foreground)] hover:text-red-400 transition-colors"
+          title="Remove index"
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
+    )
+  }
+
+  if (status === 'error') {
+    return (
+      <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-500/10 text-xs">
+        <AlertCircle size={14} className="text-red-400 shrink-0" />
+        <span className="text-red-300">
+          Indexing failed{indexStatus?.error_message ? `: ${indexStatus.error_message}` : ''}
+        </span>
+        <button
+          onClick={triggerIndexing}
+          className="ml-auto px-2.5 py-1 rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 transition-colors font-medium"
+        >
+          Retry
+        </button>
+      </div>
+    )
+  }
+
+  return null
+}
+
 export function AIAnalysisTab({ ticker }: AIAnalysisTabProps) {
   const { messages, isStreaming, error, sendMessage, stopStreaming, clearChat } = useAIChat(ticker)
+  const { isReady: filingsReady } = useFilingIndex(ticker)
   const [input, setInput] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const suggestions = filingsReady ? [...FILING_SUGGESTIONS, ...BASE_SUGGESTIONS].slice(0, 4) : BASE_SUGGESTIONS
 
   // Auto-scroll on new content
   useEffect(() => {
@@ -149,6 +265,11 @@ export function AIAnalysisTab({ ticker }: AIAnalysisTabProps) {
         )}
       </div>
 
+      {/* Filing index status banner */}
+      <div className="pt-3">
+        <FilingIndexBanner ticker={ticker} />
+      </div>
+
       {/* Messages area */}
       <div className="flex-1 overflow-y-auto py-4 space-y-4">
         {messages.length === 0 ? (
@@ -159,7 +280,7 @@ export function AIAnalysisTab({ ticker }: AIAnalysisTabProps) {
               Ask about {ticker.toUpperCase()}'s fundamentals, valuation, risks, or run scenario analyses.
             </p>
             <div className="flex flex-wrap gap-2 justify-center">
-              {SUGGESTIONS.map(suggestion => (
+              {suggestions.map(suggestion => (
                 <button
                   key={suggestion}
                   onClick={() => sendMessage(suggestion)}
@@ -177,6 +298,7 @@ export function AIAnalysisTab({ ticker }: AIAnalysisTabProps) {
               role={msg.role}
               content={msg.content}
               isStreaming={msg.isStreaming}
+              statusMessage={msg.statusMessage}
             />
           ))
         )}

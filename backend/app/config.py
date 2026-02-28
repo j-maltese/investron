@@ -29,6 +29,18 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4.1"
     ai_max_tokens: int = 4096
 
+    # RAG / Filing indexing
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimensions: int = 1536
+    chunk_max_tokens: int = 512
+    chunk_overlap_tokens: int = 50
+    rag_max_context_tokens: int = 8000      # Max filing context tokens injected per tool call
+    rag_max_tool_iterations: int = 3        # Max tool-call rounds per chat turn
+    topic_extraction_model: str = "gpt-4o-mini"
+    filing_index_max_10k: int = 3            # Most recent N annual filings to index
+    filing_index_max_10q: int = 5            # Most recent N quarterly filings to index
+    filing_index_max_8k: int = 10            # Most recent N current reports (small docs, material events)
+
     # Value Screener background scanner settings
     # All configurable via env vars (e.g. SCANNER_ENABLED=false for local dev)
     scanner_enabled: bool = True          # Set False to disable background scanning

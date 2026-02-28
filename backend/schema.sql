@@ -160,3 +160,48 @@ CREATE TABLE IF NOT EXISTS scanner_status (
 
 -- Seed the single status row (idempotent)
 INSERT INTO scanner_status (id) VALUES (1) ON CONFLICT DO NOTHING;
+
+-- pgvector extension for SEC filing RAG (on-demand vectorization)
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Tracks which companies have been indexed for RAG filing search
+CREATE TABLE IF NOT EXISTS filing_index_status (
+    id SERIAL PRIMARY KEY,
+    company_id INT REFERENCES companies(id) ON DELETE CASCADE,
+    ticker VARCHAR(10) NOT NULL UNIQUE,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    filings_indexed INT DEFAULT 0,
+    chunks_total INT DEFAULT 0,
+    last_indexed_at TIMESTAMPTZ,
+    last_filing_date DATE,
+    error_message TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Filing chunks with vector embeddings for semantic search
+CREATE TABLE IF NOT EXISTS filing_chunks (
+    id SERIAL PRIMARY KEY,
+    company_id INT REFERENCES companies(id) ON DELETE CASCADE,
+    filing_id INT REFERENCES filings_cache(id) ON DELETE CASCADE,
+    ticker VARCHAR(10) NOT NULL,
+    filing_type VARCHAR(20) NOT NULL,
+    filing_date DATE NOT NULL,
+    section_name VARCHAR(100),
+    category VARCHAR(50),
+    topics TEXT[],
+    chunk_index INT NOT NULL,
+    chunk_text TEXT NOT NULL,
+    token_count INT,
+    is_table BOOLEAN DEFAULT FALSE,
+    embedding vector(1536),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_fc_ticker ON filing_chunks(ticker);
+CREATE INDEX IF NOT EXISTS idx_fc_ticker_type ON filing_chunks(ticker, filing_type);
+CREATE INDEX IF NOT EXISTS idx_fc_category ON filing_chunks(ticker, category);
+CREATE INDEX IF NOT EXISTS idx_fc_filing_date ON filing_chunks(filing_date DESC);
+CREATE INDEX IF NOT EXISTS idx_fc_filing_id ON filing_chunks(filing_id);
+CREATE INDEX IF NOT EXISTS idx_fc_embedding ON filing_chunks
+    USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
