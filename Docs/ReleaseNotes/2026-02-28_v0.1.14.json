@@ -1,0 +1,15 @@
+{
+  "version": "0.1.14",
+  "date": "2026-02-28",
+  "title": "v0.1.14",
+  "summary": "Release 0.1.14 includes 1 enhancement.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Adds RAG for AI Analysis"
+      ]
+    }
+  ]
+}
