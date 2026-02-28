@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.models.database import init_db
-from app.api import companies, financials, filings, watchlist, valuation, release_notes, screener, ai
+from app.api import companies, financials, filings, watchlist, valuation, release_notes, screener, ai, indexing
 from app.auth import routes as auth_routes
 from app.services.scanner import scanner_loop
 
@@ -95,6 +95,7 @@ app.include_router(valuation.router, prefix="/api/valuation", tags=["valuation"]
 app.include_router(release_notes.router, prefix="/api/release-notes", tags=["release-notes"])
 app.include_router(screener.router, prefix="/api/screener", tags=["screener"])
 app.include_router(ai.router, prefix="/api/ai", tags=["ai"])
+app.include_router(indexing.router, prefix="/api/ai/filings", tags=["filing-indexing"])
 
 
 @app.get("/health")

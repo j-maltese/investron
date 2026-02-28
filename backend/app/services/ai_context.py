@@ -197,6 +197,33 @@ def _format_screener(row: dict) -> str:
     return "\n".join(lines)
 
 
+async def get_filing_index_info(db: AsyncSession, ticker: str) -> dict | None:
+    """Check if a ticker has indexed filings for RAG search.
+
+    Returns dict with status info if indexed, None otherwise.
+    """
+    result = await db.execute(
+        text("""
+            SELECT status, filings_indexed, chunks_total,
+                   last_indexed_at, last_filing_date
+            FROM filing_index_status
+            WHERE ticker = :ticker AND status = 'ready'
+        """),
+        {"ticker": ticker.upper()},
+    )
+    row = result.mappings().first()
+    if not row:
+        return None
+    return {
+        "status": row["status"],
+        "filings_indexed": row["filings_indexed"],
+        "chunks_total": row["chunks_total"],
+        "last_filing_date": (
+            row["last_filing_date"].isoformat() if row["last_filing_date"] else None
+        ),
+    }
+
+
 async def build_ticker_context(
     db: AsyncSession,
     ticker: str,

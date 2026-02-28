@@ -59,9 +59,64 @@ suggests, what additional research would help, and what key catalysts or risks t
 """
 
 
-def build_system_prompt(ticker: str, context_data: str) -> str:
-    """Fill the system prompt template with ticker-specific data."""
-    return SYSTEM_PROMPT_TEMPLATE.format(
+FILING_TOOL_ADDENDUM = """
+
+## SEC Filing Deep Search
+
+You have access to a **search_filings** tool that searches through indexed SEC filing documents \
+(10-K, 10-Q, 8-K) for {ticker}. The filings have been vectorized and you can semantically search them.
+
+**When to use search_filings:**
+- When asked about specific risks, legal proceedings, or regulatory issues
+- When asked about management discussion & analysis (MD&A) or business strategy
+- When asked about recent acquisitions, divestitures, or material events
+- When the user asks "what does the filing say about..." or similar questions
+- When you need specific details from SEC filings to support your analysis
+- When information from filings would significantly improve your response
+
+**When NOT to use search_filings:**
+- For basic financial metrics already in your data context (P/E, revenue, etc.)
+- For stock price or market data questions
+- For general knowledge questions not specific to this company's filings
+
+**Filing context available:** {filing_summary}
+
+**Tips for effective searches:**
+- Be specific in your queries (e.g., "china supply chain risk" not just "risk")
+- Use the `categories` filter to narrow results (e.g., ["risk_factors"] for risks)
+- Use `filing_types` to target specific filings (e.g., ["10-K"] for annual reports)
+- You can make multiple searches with different queries to be thorough
+"""
+
+
+def build_system_prompt(
+    ticker: str,
+    context_data: str,
+    filing_index_info: dict | None = None,
+) -> str:
+    """Fill the system prompt template with ticker-specific data.
+
+    Args:
+        ticker: Company ticker symbol.
+        context_data: Formatted financial/metrics context.
+        filing_index_info: If filings are indexed, dict with status info.
+    """
+    prompt = SYSTEM_PROMPT_TEMPLATE.format(
         ticker=ticker.upper(),
         context_data=context_data,
     )
+
+    if filing_index_info and filing_index_info.get("status") == "ready":
+        filings_n = filing_index_info.get("filings_indexed", 0)
+        chunks_n = filing_index_info.get("chunks_total", 0)
+        last_date = filing_index_info.get("last_filing_date", "unknown")
+        summary = (
+            f"{filings_n} filings indexed, {chunks_n} searchable chunks, "
+            f"most recent filing: {last_date}"
+        )
+        prompt += FILING_TOOL_ADDENDUM.format(
+            ticker=ticker.upper(),
+            filing_summary=summary,
+        )
+
+    return prompt

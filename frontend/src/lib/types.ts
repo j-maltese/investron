@@ -239,6 +239,19 @@ export interface ScannerStatus {
   last_error?: string
 }
 
+// Filing Index
+export interface FilingIndexStatus {
+  ticker: string
+  status: 'not_indexed' | 'pending' | 'indexing' | 'ready' | 'error'
+  filings_indexed: number
+  chunks_total: number
+  last_indexed_at?: string
+  last_filing_date?: string
+  error_message?: string
+  progress_message?: string
+  filing_type_breakdown?: Record<string, number>  // e.g. {"10-K": 3, "10-Q": 5, "8-K": 7}
+}
+
 // AI Chat
 export interface ChatMessage {
   id: string
@@ -246,6 +259,7 @@ export interface ChatMessage {
   content: string
   timestamp: number
   isStreaming?: boolean
+  statusMessage?: string
 }
 
 export interface ChatRequest {

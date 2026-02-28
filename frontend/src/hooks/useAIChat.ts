@@ -76,11 +76,22 @@ export function useAIChat(ticker: string) {
           setError(event.error)
           break
         }
-        if (event.token) {
-          accumulated += event.token
+        if (event.status) {
+          // Tool-call status message (e.g., "Searching filings: risk factors...")
           setMessages(prev =>
             prev.map(m =>
-              m.id === assistantMsg.id ? { ...m, content: accumulated } : m,
+              m.id === assistantMsg.id ? { ...m, statusMessage: event.status } : m,
+            ),
+          )
+        }
+        if (event.token) {
+          accumulated += event.token
+          // Clear status message once content starts arriving
+          setMessages(prev =>
+            prev.map(m =>
+              m.id === assistantMsg.id
+                ? { ...m, content: accumulated, statusMessage: undefined }
+                : m,
             ),
           )
         }
