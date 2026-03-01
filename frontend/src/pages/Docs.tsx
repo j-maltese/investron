@@ -178,7 +178,7 @@ function UserGuide() {
         <p>
           Search for any publicly traded US company using the search bar in the header. Type a ticker
           symbol (e.g., GOOGL) and select from the results. This opens the <strong>Research</strong> page,
-          which has four tabs:
+          which has five tabs:
         </p>
         <SubSection title="Research page header">
           <p>
@@ -196,8 +196,8 @@ function UserGuide() {
           <li><strong>Key Metrics</strong> — A grid of important financial ratios and figures:
             P/E ratio, P/B ratio, market cap, dividend yield, 52-week high/low, profit margins, ROE, debt-to-equity, and more.
           </li>
-          <li><strong>Graham Score</strong> — Benjamin Graham's evaluation (see section 9 below for details).</li>
-          <li><strong>Growth Lens</strong> — Metrics designed for pre-profit or high-growth companies (see section 10).</li>
+          <li><strong>Graham Score</strong> — Benjamin Graham's evaluation (see section 10 below for details).</li>
+          <li><strong>Growth Lens</strong> — Metrics designed for pre-profit or high-growth companies (see section 11).</li>
           <li><strong>Price chart</strong> — Historical stock price visualization.</li>
         </ul>
       </Section>
@@ -292,7 +292,76 @@ function UserGuide() {
         </SubSection>
       </Section>
 
-      <Section title="9. Graham Score">
+      <Section title="9. AI Analysis">
+        <p>
+          The <strong>AI Analysis</strong> tab on the Research page provides a conversational AI research assistant
+          powered by GPT-4o. It has access to all of the company's structured data — key metrics, Graham Score,
+          growth metrics, financial statements, and screener scores — so it can reason with real numbers rather
+          than general knowledge.
+        </p>
+        <SubSection title="How to use it">
+          <p>
+            Type a question in the chat input or click one of the suggestion chips to get started.
+            The assistant streams its response in real time. You can ask follow-up questions — the conversation
+            context is preserved within the session.
+          </p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>Suggestion chips</strong> — Pre-built prompts for common analyses (valuation frameworks, scenario analysis, risk/catalyst review, DCF walkthrough).</li>
+            <li><strong>Shift+Enter</strong> — Insert a new line without sending.</li>
+            <li><strong>Stop button</strong> — Cancel a response mid-stream.</li>
+            <li><strong>Clear chat</strong> — Start a fresh conversation (trash icon in the header).</li>
+          </ul>
+        </SubSection>
+        <SubSection title="Filing Deep Search">
+          <p>
+            By default, the AI reasons from structured data only (ratios, scores, financial tables). To give it access
+            to the <strong>narrative content</strong> inside SEC filings — risk factors, management discussion, business
+            strategy, acquisition disclosures, earnings guidance — you can index a company's filings.
+          </p>
+          <p className="font-medium">How to enable:</p>
+          <ol className="list-decimal pl-5 space-y-1">
+            <li>Open the AI Analysis tab for a company.</li>
+            <li>Click the blue <strong>Index Filings</strong> button in the banner.</li>
+            <li>Wait for indexing to complete (typically 2-5 minutes). Progress updates show in real time.</li>
+            <li>Once the banner turns green ("Filing search active"), the AI can now search filing text.</li>
+          </ol>
+          <p className="font-medium">What gets indexed:</p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>10-K</strong> — Up to 3 most recent annual reports (comprehensive business and financial overview).</li>
+            <li><strong>10-Q</strong> — Up to 5 most recent quarterly reports (interim updates).</li>
+            <li><strong>8-K</strong> — Up to 10 most recent current reports (material events: earnings, acquisitions, leadership changes).</li>
+          </ul>
+          <p>
+            Filings are broken into searchable chunks organized by section (e.g., Risk Factors, MD&A, Financial Statements).
+            When you ask a question, the AI automatically decides whether to search the filing text and retrieves the
+            most relevant passages. Responses cite the specific filing type and date so you can verify against the source.
+          </p>
+          <p className="font-medium">Suggested questions when filings are indexed:</p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li>"What risk factors does the 10-K mention?"</li>
+            <li>"Summarize the MD&A section"</li>
+            <li>"Any recent acquisitions or material events?"</li>
+            <li>"What does management say about competitive landscape?"</li>
+          </ul>
+        </SubSection>
+        <SubSection title="Managing the index">
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>Re-index</strong> — Click the refresh icon on the green banner to re-run indexing (e.g., after new filings are published).</li>
+            <li><strong>Remove index</strong> — Click the trash icon on the green banner to delete all indexed data for that company.</li>
+            <li>Indexing is per-company and on-demand — only companies you choose to index are processed.</li>
+          </ul>
+        </SubSection>
+        <SubSection title="Important notes">
+          <ul className="list-disc pl-5 space-y-1">
+            <li>The AI uses GPT-4o for analysis and may occasionally produce inaccurate conclusions. Always verify against the source filings.</li>
+            <li>Filing indexing requires the SEC EDGAR full-text filings to be available (most US public companies).</li>
+            <li>Conversations are stored in your browser session only — they are not saved across page reloads.</li>
+            <li>The assistant is for research purposes only and does not provide investment advice.</li>
+          </ul>
+        </SubSection>
+      </Section>
+
+      <Section title="10. Graham Score">
         <p>
           The Graham Score evaluates a stock against Benjamin Graham's 7 criteria for defensive investors,
           as described in <em>The Intelligent Investor</em>. Each criterion is shown with a green checkmark
@@ -329,7 +398,7 @@ function UserGuide() {
         </SubSection>
       </Section>
 
-      <Section title="10. Growth Lens">
+      <Section title="11. Growth Lens">
         <p>
           The Growth Lens appears on the Overview tab and provides metrics specifically designed for
           <strong> pre-profit and high-growth companies</strong> (like JOBY or early-stage tech companies)
@@ -349,7 +418,7 @@ function UserGuide() {
         </SubSection>
       </Section>
 
-      <Section title="11. Data Sources & Freshness">
+      <Section title="12. Data Sources & Freshness">
         <p>
           Investron uses two primary data sources, both free and publicly available:
         </p>

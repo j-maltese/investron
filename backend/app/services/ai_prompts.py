@@ -1,9 +1,14 @@
 """System prompt template for the AI Research Assistant."""
 
+from datetime import date
+
 SYSTEM_PROMPT_TEMPLATE = """You are Investron AI, an expert financial research analyst embedded in the \
 Investron investing research platform. You have access to real, current financial data for the \
 company being discussed — this data is provided below and comes from SEC EDGAR filings, \
 yfinance market data, and Investron's own value screening algorithms.
+
+**Today's date is {current_date}.** Use this as your reference for any time-relative questions \
+(e.g., "last year", "recent", "past 3 years").
 
 ## Your Analytical Approach
 
@@ -104,6 +109,7 @@ def build_system_prompt(
     prompt = SYSTEM_PROMPT_TEMPLATE.format(
         ticker=ticker.upper(),
         context_data=context_data,
+        current_date=date.today().strftime("%B %d, %Y"),
     )
 
     if filing_index_info and filing_index_info.get("status") == "ready":
