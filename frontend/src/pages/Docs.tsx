@@ -4,10 +4,11 @@ import { PageLayout } from '@/components/layout/PageLayout'
 import { useReleaseNotes } from '@/hooks/useReleaseNotes'
 import type { ReleaseNote, ReleaseNoteSection } from '@/lib/types'
 
-type Tab = 'user' | 'developer' | 'releases'
+type Tab = 'user' | 'wheel' | 'developer' | 'releases'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'user', label: 'User Guide' },
+  { key: 'wheel', label: 'Wheel Strategy Guide' },
   { key: 'developer', label: 'Developer Guide' },
   { key: 'releases', label: 'Release Notes' },
 ]
@@ -40,6 +41,7 @@ export function Docs() {
         {/* Tab content */}
         <div className="max-w-4xl">
           {activeTab === 'user' && <UserGuide />}
+          {activeTab === 'wheel' && <WheelGuide />}
           {activeTab === 'developer' && <DeveloperGuide />}
           {activeTab === 'releases' && <ReleaseNotesTab />}
         </div>
@@ -375,9 +377,11 @@ function UserGuide() {
               for a buy/hold/sell signal with confidence rating. The AI receives full financial statements and,
               when available, relevant excerpts from SEC filings (risk factors, MD&A, guidance) for deeper analysis.
               Only high-conviction signals are executed.</li>
-            <li><strong>The Wheel Strategy ($5,000)</strong> — A mechanical options strategy: sell cash-secured puts
+            <li><strong>The Wheel Strategy ($5,000)</strong> — A mechanical options income strategy: sell cash-secured puts
               on affordable stocks, get assigned if the put expires in-the-money, then sell covered calls until the
-              stock is called away. Repeats for steady premium income. <em>(Coming soon — Phase 3.)</em></li>
+              stock is called away. Repeats for steady premium income. Includes defensive features like hard stops,
+              rolling puts, and adjusted cost basis tracking. See the <strong>Wheel Strategy Guide</strong> tab for
+              a detailed explanation.</li>
           </ul>
         </SubSection>
         <SubSection title="Page tabs">
@@ -385,7 +389,9 @@ function UserGuide() {
             <li><strong>Overview</strong> — Portfolio summary (total value, P&L) and strategy cards showing status, capital, and controls.</li>
             <li><strong>Positions</strong> — All open and closed positions with entry price, current value, and P&L.</li>
             <li><strong>Order History</strong> — Every order submitted to Alpaca, including the AI reasoning that triggered each trade.</li>
-            <li><strong>Activity Log</strong> — Event stream: orders placed, fills received, strategy starts/stops, errors, and circuit breaker events.</li>
+            <li><strong>Activity Log</strong> — Event stream with filter pills (Decisions, Executions, Blocked, Errors),
+              date range picker, and expandable detail rows. Click any event to see structured details including
+              decision reasoning, fill amounts, and filter breakdowns.</li>
           </ul>
         </SubSection>
         <SubSection title="Starting a strategy">
@@ -548,6 +554,344 @@ function UserGuide() {
             <li>Prices are delayed (not real-time streaming); typically 15-minute delay</li>
             <li>Insider transaction data may not be complete for all companies</li>
           </ul>
+        </SubSection>
+      </Section>
+    </div>
+  )
+}
+
+/* ─── Wheel Strategy Guide ─── */
+
+function WheelGuide() {
+  return (
+    <div className="space-y-8">
+      <Section title="1. What Is the Wheel?">
+        <p>
+          The Wheel is a <strong>mechanical options income strategy</strong> that generates returns through
+          options premiums rather than stock price appreciation. It cycles through three phases:
+        </p>
+        <ol className="list-decimal pl-5 space-y-2">
+          <li>
+            <strong>Sell a cash-secured put</strong> — You sell someone the right to sell you 100 shares
+            of a stock at a specific price (the <em>strike price</em>) by a specific date (the <em>expiration</em>).
+            In exchange, you receive a <em>premium</em> (cash payment) upfront. You must keep enough cash on
+            hand to buy the shares if required — this is the "cash-secured" part.
+          </li>
+          <li>
+            <strong>Get assigned (if the put expires in-the-money)</strong> — If the stock price is below
+            the strike at expiration, you're <em>assigned</em>: you must buy 100 shares at the strike price.
+            This is expected and part of the plan — you're buying a stock you wanted to own anyway, at a price
+            you chose, and you already collected a premium that reduces your effective cost.
+          </li>
+          <li>
+            <strong>Sell covered calls</strong> — Now that you own 100 shares, you sell someone the right to
+            buy them from you at a higher price. You collect another premium. If the stock rises above the strike,
+            your shares get "called away" (sold), and the cycle completes. If not, the call expires worthless,
+            you keep the premium, and sell another call.
+          </li>
+        </ol>
+        <p>
+          The cycle then repeats: sell another put, potentially get assigned again, sell calls. Each time
+          you collect premium — this is the income. The strategy works best on <strong>stocks you'd be willing
+          to own</strong> at prices you're comfortable paying.
+        </p>
+      </Section>
+
+      <Section title="2. Key Options Concepts">
+        <SubSection title="What is a put?">
+          <p>
+            A <strong>put option</strong> gives the buyer the right (not obligation) to sell 100 shares of a stock
+            at a specific price (strike) by a specific date (expiration). When you <em>sell</em> a put, you're
+            taking on the <em>obligation</em> to buy those shares if the buyer exercises their right. In exchange,
+            you receive a premium.
+          </p>
+        </SubSection>
+        <SubSection title="What is a call?">
+          <p>
+            A <strong>call option</strong> gives the buyer the right to buy 100 shares at the strike price. When you
+            <em> sell</em> a covered call (you already own the shares), you're agreeing to sell them at the strike
+            if exercised. You collect a premium for this.
+          </p>
+        </SubSection>
+        <SubSection title="Premium">
+          <p>
+            The <strong>premium</strong> is the cash you receive when you sell an option. It's yours to keep regardless
+            of what happens. Premiums are quoted per share, but each contract covers 100 shares. So a $0.85 premium =
+            $85 per contract.
+          </p>
+        </SubSection>
+        <SubSection title="Strike price">
+          <p>
+            The <strong>strike</strong> is the agreed-upon price for the transaction. For puts, it's the price you'd
+            buy the stock at if assigned. For calls, it's the price you'd sell at if called away. Lower put strikes =
+            lower assignment probability but less premium. Higher call strikes = less likely to be called away.
+          </p>
+        </SubSection>
+        <SubSection title="Delta">
+          <p>
+            <strong>Delta</strong> measures how much an option's price changes when the stock moves $1. For our
+            purposes, delta roughly approximates the <em>probability of assignment</em>. A put with delta 0.20
+            has roughly a 20% chance of being assigned. Investron targets delta 0.15-0.30 — a sweet spot between
+            reasonable premium and manageable assignment risk.
+          </p>
+        </SubSection>
+        <SubSection title="DTE (Days to Expiration)">
+          <p>
+            <strong>DTE</strong> is how many days until the option expires. Investron targets 7-45 days. Shorter
+            expirations have faster time decay (premiums shrink faster as expiration approaches), which benefits
+            option sellers. Longer expirations offer more premium but tie up capital longer.
+          </p>
+        </SubSection>
+      </Section>
+
+      <Section title="3. How Investron Runs the Wheel">
+        <p>
+          Every ~60 seconds during market hours, the trading engine runs a cycle for each symbol in the
+          Wheel's <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">symbol_list</code> configuration. Here's what happens at each phase:
+        </p>
+        <SubSection title="Phase 1: Selling puts (IDLE → SELLING_PUTS)">
+          <p>For each symbol with no open position:</p>
+          <ol className="list-decimal pl-5 space-y-1">
+            <li>Check affordability: can we cover 100 shares at the strike price with available cash?</li>
+            <li>Fetch the option chain from Alpaca with the configured DTE window (7-45 days)</li>
+            <li>Filter contracts by delta (0.15-0.30), yield (4%+), open interest (100+), and bid &gt; 0</li>
+            <li>Score remaining candidates: 40% yield + 30% delta proximity + 30% DTE proximity</li>
+            <li>Submit a limit sell order for the highest-scoring put</li>
+            <li>Reserve cash for potential assignment</li>
+          </ol>
+        </SubSection>
+        <SubSection title="Phase 2: Monitoring puts (SELLING_PUTS)">
+          <p>While the put is open, each cycle monitors the position:</p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li>If the put expires <strong>out-of-the-money</strong> (stock price above strike): the option expires worthless, we keep the premium, and return to idle. This is the ideal outcome — pure income.</li>
+            <li>If the put is deep <strong>in-the-money</strong> near expiration (stock dropped significantly): the strategy considers <em>rolling</em> the put (see "Rolling Puts" below).</li>
+            <li>If assigned: we now own 100 shares and transition to phase 3.</li>
+          </ul>
+        </SubSection>
+        <SubSection title="Phase 3: Assigned stock (ASSIGNED → SELLING_CALLS)">
+          <p>Before selling a call, the strategy runs defensive checks (in order):</p>
+          <ol className="list-decimal pl-5 space-y-1">
+            <li><strong>Hard stop check</strong> — If the stock has dropped more than 25% from entry, sell immediately (see "Hard Stops" below).</li>
+            <li><strong>Capital efficiency check</strong> — If the stock has been held more than 60 days with no recovery, consider exiting (see "Capital Efficiency" below).</li>
+            <li><strong>Sell a covered call</strong> — Same option selection logic as puts, but for calls. The minimum strike is based on the <em>adjusted cost basis</em> (see below), not the raw entry price.</li>
+          </ol>
+        </SubSection>
+        <SubSection title="Phase 4: Monitoring calls (SELLING_CALLS)">
+          <ul className="list-disc pl-5 space-y-1">
+            <li>If the call expires <strong>out-of-the-money</strong>: keep the premium, still hold the stock, sell another call. This generates income while waiting for the stock to recover.</li>
+            <li>If the call is exercised (<strong>called away</strong>): shares are sold at the strike price. Cash is credited, the cycle completes, and we return to idle to sell another put.</li>
+          </ul>
+        </SubSection>
+      </Section>
+
+      <Section title="4. Risk Management">
+        <p>
+          The Wheel's biggest risk is a stock dropping significantly after you're assigned. Professional options
+          traders use several techniques to manage this — Investron implements them all automatically.
+        </p>
+        <SubSection title="Hard stops">
+          <p>
+            If an assigned stock drops more than <strong>25%</strong> from entry (configurable via{' '}
+            <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">max_stock_loss_pct</code>), the strategy
+            sells the stock immediately via market order. This prevents the "bagholder" trap — holding a
+            deteriorating position hoping it recovers, while capital is stuck and can't be redeployed.
+          </p>
+          <p>
+            The hard stop logs the full breakdown: entry price, exit price, loss percentage, total premiums
+            collected on that symbol, and net loss after premiums.
+          </p>
+        </SubSection>
+        <SubSection title="Rolling puts">
+          <p>
+            When a sold put is deep in-the-money (stock is more than 10% below the strike) with 3 or fewer
+            days to expiration, the strategy attempts to <strong>roll</strong> the put:
+          </p>
+          <ol className="list-decimal pl-5 space-y-1">
+            <li>Buy back the current put (buy-to-close)</li>
+            <li>Sell a new put at a lower strike and/or later expiration (sell-to-open)</li>
+            <li>Only execute if the roll produces a <strong>net credit</strong> of at least $0.10/share</li>
+          </ol>
+          <p>
+            Rolling delays assignment and collects additional premium, improving your position before potentially
+            taking the shares. If no profitable roll exists, the strategy lets assignment happen — that's the
+            Wheel's natural flow.
+          </p>
+        </SubSection>
+        <SubSection title="Adjusted cost basis">
+          <p>
+            Your <strong>true break-even</strong> on an assigned stock isn't just the entry (strike) price — it's
+            the entry price minus all premiums collected on that symbol. For example:
+          </p>
+          <div className="card font-mono text-xs whitespace-pre leading-5 bg-[var(--muted)]">
+{`Assigned at strike: $22.00 per share ($2,200 for 100 shares)
+Put premium collected: $0.85 ($85 total)
+First call premium:   $0.60 ($60 total)
+Second call premium:  $0.45 ($45 total)
+────────────────────────────────
+Total premiums:       $1.90 ($190 total)
+Adjusted cost basis:  $22.00 - $1.90 = $20.10
+
+Break-even is $20.10, not $22.00`}
+          </div>
+          <p>
+            The strategy uses this adjusted cost basis when setting the minimum call strike — it can sell calls
+            slightly below the raw entry price because premiums already offset some of the cost. This is configurable
+            via <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">call_min_strike_pct</code> (default: allows strikes up to 5% below adjusted basis).
+          </p>
+        </SubSection>
+        <SubSection title="Capital efficiency exits">
+          <p>
+            If assigned stock has been held for more than <strong>60 days</strong> (configurable) with no price
+            recovery, the position is tying up capital unproductively. The strategy takes action:
+          </p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>Down more than 15%:</strong> Sell the stock and free the capital for redeployment</li>
+            <li><strong>Down 5-15%:</strong> Sell a more aggressive call (closer to at-the-money) to accelerate exit</li>
+            <li><strong>Down less than 5%:</strong> Normal call selling continues</li>
+          </ul>
+          <p>
+            The philosophy: don't tie up money in broken positions. Free capital and redeploy it where the
+            Wheel can generate income again. Discipline over hope.
+          </p>
+        </SubSection>
+        <SubSection title="PDT (Pattern Day Trader) protection">
+          <p>
+            Accounts under $25,000 are limited to 3 day trades per rolling 5 business days. A day trade is
+            opening and closing the same position on the same calendar day — rolling a put (buy-to-close +
+            sell-to-open) counts. The strategy tracks recent round-trip trades and blocks actions that would
+            exceed the limit, logging a <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">blocked_pdt_limit</code> event.
+          </p>
+        </SubSection>
+      </Section>
+
+      <Section title="5. Reading the Activity Feed">
+        <p>
+          The Activity Log tab on the Trading page shows every decision, execution, and restriction.
+          Use the <strong>filter pills</strong> at the top to focus on what you care about:
+        </p>
+        <SubSection title="Decisions (why something was done)">
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>option_selected</strong> — The best option was chosen from the chain. Details include delta, yield, score, and how many candidates were evaluated.</li>
+            <li><strong>put_sold / call_sold</strong> — An option sell order was submitted. Details include strike, premium, cash committed, and the reasoning.</li>
+            <li><strong>roll_executed</strong> — A put was rolled to a new strike/date. Shows old and new symbols, net credit.</li>
+            <li><strong>hard_stop</strong> — Stock was sold due to exceeding the loss threshold. Full P&L breakdown including premiums collected.</li>
+            <li><strong>capital_efficiency_exit</strong> — Stock was sold or call strategy adjusted after extended hold with no recovery.</li>
+          </ul>
+        </SubSection>
+        <SubSection title="Executions (what happened)">
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>order_placed / order_filled</strong> — Orders submitted to and filled by Alpaca.</li>
+            <li><strong>assignment</strong> — Put was exercised, now holding stock.</li>
+            <li><strong>called_away</strong> — Call was exercised, shares sold, wheel cycle complete.</li>
+            <li><strong>option_expired</strong> — Option expired worthless (you kept the premium).</li>
+            <li><strong>phase_transition</strong> — Symbol moved to a new wheel phase.</li>
+          </ul>
+        </SubSection>
+        <SubSection title="Blocked (what the program wanted to do but couldn't)">
+          <p>These are particularly important for understanding system constraints:</p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>blocked_insufficient_cash</strong> — Wanted to sell a put but can't afford assignment. Shows how much was needed vs. available.</li>
+            <li><strong>blocked_too_expensive</strong> — Ticker's 100 shares exceed total strategy capital.</li>
+            <li><strong>blocked_no_options</strong> — No option contracts passed filters. Shows filter breakdown (how many failed each criterion).</li>
+            <li><strong>blocked_position_exists</strong> — Already have an open position on this symbol.</li>
+            <li><strong>blocked_roll_no_credit</strong> — Wanted to roll a put but couldn't get a net credit.</li>
+            <li><strong>blocked_pdt_limit</strong> — Would exceed the 3-per-5-day day trade limit.</li>
+          </ul>
+        </SubSection>
+        <SubSection title="Using date range and detail expansion">
+          <ul className="list-disc pl-5 space-y-1">
+            <li>Use the <strong>date range picker</strong> to narrow to a specific time period (Today, This Week, This Month, or custom dates).</li>
+            <li><strong>Click any event row</strong> to expand it and see the full structured details — reasoning text, numerical breakdowns, filter results.</li>
+            <li>The <strong>"reason"</strong> field (shown in italics at the top of expanded details) explains the decision logic in plain English.</li>
+            <li>Click <strong>"Load more"</strong> at the bottom to fetch older events from the database.</li>
+          </ul>
+        </SubSection>
+      </Section>
+
+      <Section title="6. Configuration">
+        <p>
+          The Wheel's behavior is controlled by its JSONB config, which can be edited from the strategy card
+          on the Trading page (gear icon → edit config). All values are tunable without code changes.
+        </p>
+        <SubSection title="Symbol selection">
+          <p>
+            <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">symbol_list</code> — The tickers the Wheel trades. Default:{' '}
+            <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">["F", "SOFI", "INTC", "PLTR", "BAC", "AMD"]</code>.
+            Choose stocks you'd be willing to own at the put strike price. Tickers are sorted by price ascending
+            each cycle — cheaper stocks get capital first since assignment costs less.
+          </p>
+        </SubSection>
+        <SubSection title="Option selection parameters">
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>delta_min / delta_max</strong> (0.15-0.30) — Target delta range. Lower delta = less premium but lower assignment probability.</li>
+            <li><strong>yield_min / yield_max</strong> (4%-100%) — Annualized premium yield range. Filters out options with too little or suspiciously high yield.</li>
+            <li><strong>expiration_min_days / expiration_max_days</strong> (7-45) — DTE window. Shorter = faster time decay (good for sellers), longer = more premium.</li>
+            <li><strong>open_interest_min</strong> (100) — Minimum open interest. Ensures enough liquidity for reasonable fills.</li>
+          </ul>
+        </SubSection>
+        <SubSection title="Defensive parameters">
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>max_stock_loss_pct</strong> (25%) — Hard stop threshold. Increase to tolerate more pain; decrease for tighter risk management.</li>
+            <li><strong>roll_threshold_pct</strong> (10%) — How deep ITM a put must be before the strategy attempts to roll. Lower = more aggressive rolling.</li>
+            <li><strong>roll_min_net_credit</strong> ($0.10) — Minimum net credit required to execute a roll. Prevents rolling at a loss.</li>
+            <li><strong>call_min_strike_pct</strong> (-5%) — How far below adjusted cost basis a call strike can be. More negative = more aggressive (risk selling at a loss, but frees capital faster).</li>
+            <li><strong>capital_efficiency_days</strong> (60) — How long to hold an underwater stock before escalating exit strategy.</li>
+            <li><strong>pdt_protection</strong> (true) — Track day trades to avoid PDT violations. Disable only if your account has &gt; $25,000.</li>
+          </ul>
+        </SubSection>
+      </Section>
+
+      <Section title="7. Frequently Asked Questions">
+        <SubSection title="What if a stock crashes after I'm assigned?">
+          <p>
+            The hard stop at 25% protects against catastrophic loss. Before that threshold, the strategy
+            sells covered calls to collect premium, which reduces your effective cost basis. If the stock is
+            down but recovering, the Wheel naturally works through it. If it keeps dropping, the hard stop fires
+            and the strategy moves on.
+          </p>
+        </SubSection>
+        <SubSection title="Can I add or remove tickers?">
+          <p>
+            Yes — edit the <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">symbol_list</code> in the strategy config.
+            New tickers will be picked up on the next cycle. Removed tickers with open positions will be monitored
+            until those positions close but won't open new ones.
+          </p>
+        </SubSection>
+        <SubSection title="Why are PLTR and AMD in the list if they're too expensive?">
+          <p>
+            The strategy automatically skips tickers it can't afford (logged as <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">blocked_too_expensive</code>).
+            They're in the list so that if capital grows large enough (or if prices drop), they become eligible.
+            No manual intervention needed.
+          </p>
+        </SubSection>
+        <SubSection title="What does 'rolling' actually do?">
+          <p>
+            Rolling means closing the current option position and opening a new one in a single logical action.
+            For a put that's deep in-the-money near expiration: buy back the current put (costs money), then
+            sell a new put at a lower strike or later date (receives money). If the new premium exceeds the
+            buyback cost, you've collected a net credit and delayed or avoided assignment at a worse price.
+          </p>
+        </SubSection>
+        <SubSection title="How much does the Wheel cost to run?">
+          <p>
+            The Wheel uses no AI — all decisions are mechanical based on the configured parameters. The only costs
+            are Alpaca API calls ($0) and option market data ($0, included with Alpaca). Unlike the Simple Stock
+            strategy, the Wheel generates zero GPT-4o costs.
+          </p>
+        </SubSection>
+        <SubSection title="What happens outside market hours?">
+          <p>
+            The trading engine sleeps during off-hours (nights, weekends, holidays). No orders are placed, no
+            monitoring occurs. The engine resumes automatically when the market opens (Mon-Fri, 9 AM - 4 PM ET).
+          </p>
+        </SubSection>
+        <SubSection title="How do I know if the strategy is working?">
+          <p>
+            Check the <strong>Activity Log</strong> — a healthy Wheel produces a steady stream of events:
+            puts sold, premiums collected, occasional assignments and call sales. If you see mostly
+            "blocked" events, the capital may be too small for the configured tickers, or the option filters
+            may be too tight. If you see "error" events, check the backend logs for details.
+          </p>
         </SubSection>
       </Section>
     </div>

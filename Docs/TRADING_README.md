@@ -3,7 +3,7 @@
 Investron can automatically trade on your behalf using Alpaca Markets' paper trading API. Two independent strategies run in the background, each with its own capital allocation and trading logic:
 
 1. **Simple Stock Trading** ($500 paper) — AI-powered buy/sell of common stock, leveraging the screener scores and GPT-4o analysis
-2. **The Wheel Strategy** ($5,000 paper) — Mechanical options strategy: sell cash-secured puts, get assigned, sell covered calls, repeat *(Phase 3 — not yet implemented)*
+2. **The Wheel Strategy** ($5,000 paper) — Mechanical options income strategy: sell cash-secured puts, get assigned stock, sell covered calls, repeat. Full defensive suite with hard stops, rolling puts, adjusted cost basis tracking, and capital efficiency exits
 
 ## How It Works
 
@@ -36,10 +36,12 @@ Trading Engine (background loop, runs every 60s during market hours)
 │          - Size: max 25% of capital per position              │
 │          - Execute: market order via Alpaca                   │
 │                                                               │
-│     Wheel: (Phase 3 — not yet implemented)                    │
-│       a. Sell cash-secured puts on selected tickers           │
-│       b. If assigned, hold stock and sell covered calls       │
-│       c. If called away, collect profit, restart cycle        │
+│     Wheel:                                                    │
+│       a. Sync option orders with Alpaca (poll for fills)     │
+│       b. Detect assignments (put/call exercises)             │
+│       c. Per symbol: sell puts, manage puts (roll),          │
+│          hard stop check, sell calls, manage calls           │
+│       d. Track adjusted cost basis (premiums collected)      │
 │                                                               │
 │  4. Update last_run timestamp                                 │
 │  5. Sync P&L from position data                               │
@@ -236,7 +238,7 @@ Trading Engine (background loop, runs every 60s during market hours)
 }
 ```
 
-**Wheel:** *(Phase 3)*
+**Wheel:**
 ```json
 {
     "symbol_list": ["F", "SOFI", "INTC", "PLTR", "BAC", "AMD"],
@@ -247,10 +249,29 @@ Trading Engine (background loop, runs every 60s during market hours)
     "expiration_min_days": 7,
     "expiration_max_days": 45,
     "open_interest_min": 100,
-    "score_min": 0.05,
+    "max_stock_loss_pct": 25.0,
+    "roll_threshold_pct": 10.0,
+    "roll_min_net_credit": 0.10,
+    "call_min_strike_pct": -5.0,
+    "capital_efficiency_days": 60,
+    "pdt_protection": true,
     "check_interval_minutes": 15
 }
 ```
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `symbol_list` | 6 tickers | Affordable stocks with good options liquidity |
+| `delta_min` / `delta_max` | 0.15-0.30 | Target delta range for sold options (probability of assignment) |
+| `yield_min` / `yield_max` | 4%-100% | Annualized premium yield filter |
+| `expiration_min_days` / `expiration_max_days` | 7-45 | DTE window for option selection |
+| `open_interest_min` | 100 | Minimum open interest for liquidity |
+| `max_stock_loss_pct` | 25% | Hard stop: sell assigned stock if down more than this |
+| `roll_threshold_pct` | 10% | Roll put if stock is more than this % below strike near expiry |
+| `roll_min_net_credit` | $0.10 | Only roll if the roll produces at least this net credit per share |
+| `call_min_strike_pct` | -5% | Allow selling calls up to 5% below adjusted cost basis for capital efficiency |
+| `capital_efficiency_days` | 60 | Review assigned stock if held longer than this with no recovery |
+| `pdt_protection` | true | Track day trades, block if would exceed 3-per-5-day PDT limit |
 
 ### Backend Services
 
@@ -261,6 +282,7 @@ backend/app/
 │   │                              #   Cached client singletons (TradingClient, StockDataClient, OptionDataClient)
 │   │                              #   submit_stock_order(), submit_option_order(), get_order_status()
 │   │                              #   get_positions(), get_account_info(), get_option_chain(), cancel_order()
+│   │                              #   parse_occ_symbol(), build_occ_symbol() — OCC option symbol helpers
 │   │
 │   ├── trading_db.py             # All CRUD for trading tables (raw SQL + text())
 │   │                              #   Strategies: get/update
@@ -275,13 +297,27 @@ backend/app/
 │   │                              #   _is_market_hours() — UTC-based gate
 │   │                              #   Daily auto-index gate (_last_auto_index_date)
 │   │
-│   └── simple_stock_strategy.py  # AI-powered stock trading logic
-│                                  #   run_simple_stock_cycle() — sync → sells → buys
-│                                  #   run_auto_index_cycle() — daily SEC filing indexing
-│                                  #   _get_candidate_tickers() — screener top N by composite score
-│                                  #   _get_ai_trade_signal() — GPT-4o with financials + RAG filing context
-│                                  #   _sync_pending_orders() — poll Alpaca for fills
-│                                  #   _execute_buy() / _execute_sell() — order + position management
+│   ├── simple_stock_strategy.py  # AI-powered stock trading logic
+│   │                              #   run_simple_stock_cycle() — sync → sells → buys
+│   │                              #   run_auto_index_cycle() — daily SEC filing indexing
+│   │                              #   _get_candidate_tickers() — screener top N by composite score
+│   │                              #   _get_ai_trade_signal() — GPT-4o with financials + RAG filing context
+│   │                              #   _sync_pending_orders() — poll Alpaca for fills
+│   │                              #   _execute_buy() / _execute_sell() — order + position management
+│   │
+│   └── wheel_strategy.py         # Mechanical options income strategy (The Wheel)
+│                                  #   run_wheel_cycle() — sync → detect assignments → per-symbol processing
+│                                  #   _sync_option_orders() — poll Alpaca for option fills, handle premiums
+│                                  #   _detect_assignments() — compare Alpaca positions vs local DB
+│                                  #   _sell_put() — sell cash-secured put (phase 1)
+│                                  #   _sell_call() — sell covered call with adjusted cost basis (phase 3)
+│                                  #   _select_best_option() — filter + score option chain
+│                                  #   _manage_put_position() — expiration monitoring + rolling
+│                                  #   _manage_call_position() — call expiration monitoring
+│                                  #   _check_hard_stop() — sell if down > max_stock_loss_pct
+│                                  #   _check_capital_efficiency() — exit if held > N days, no recovery
+│                                  #   _get_adjusted_cost_basis() — true break-even (entry - premiums)
+│                                  #   _would_exceed_pdt() — PDT day trade limit check
 │
 └── api/
     └── trading.py                # REST API at /api/trading
@@ -373,10 +409,14 @@ Only the provided keys are updated; existing config keys are preserved (shallow 
 ```
 GET    /positions?strategy_id=simple_stock&status=open&limit=50&offset=0
 GET    /orders?strategy_id=simple_stock&limit=50&offset=0
-GET    /activity?strategy_id=simple_stock&limit=50&offset=0
+GET    /activity?strategy_id=wheel&event_type=blocked&date_from=2026-03-01&date_to=2026-03-03&limit=50&offset=0
 ```
 
 All return paginated results with a `total_count` field.
+
+The activity endpoint supports additional filters:
+- `event_type` — exact match or prefix match (e.g., `blocked` matches all `blocked_*` events)
+- `date_from` / `date_to` — ISO date strings for time range filtering
 
 ### Portfolio
 
@@ -511,19 +551,185 @@ Financial context is built by `build_ticker_context()` from `ai_context.py` — 
 
 If the ticker has indexed SEC filings (via the daily auto-index or manual indexing from the AI Analysis tab), relevant filing excerpts are injected into the prompt under a `== SEC FILING EXCERPTS ==` header. The vector search targets risk factors, MD&A, and guidance/outlook sections, capped at 2,000 tokens. This gives the AI qualitative context (management commentary, risk disclosures) alongside the quantitative metrics.
 
+## The Wheel Strategy — Detailed Flow
+
+The Wheel is a mechanical options income strategy. Unlike the Simple Stock strategy (which uses AI to decide what to buy/sell), the Wheel follows a rigid state machine: sell puts → get assigned → sell calls → shares called away → repeat. The intelligence is in the option selection parameters and defensive exit rules.
+
+### State Machine
+
+```
+IDLE ──sell put──→ SELLING_PUTS ──assigned──→ ASSIGNED ──sell call──→ SELLING_CALLS
+  ↑                  │       │                  │    │                      │
+  │           expired OTM    │            hard stop   │               expired OTM
+  │           (keep premium) │            (sell stock, │              (keep premium,
+  │                  │       │             take loss)  │              still hold stock)
+  ←──────────────────┘       │                  │     │                     │
+  ↑                          │                  ↓     │                     │
+  │                    ROLL PUT              IDLE      │            called away
+  │                    (buy back +                    │            (shares sold)
+  │                     sell new put                  │                     │
+  │                     at lower strike)              │                     │
+  │                          │                        │                     │
+  ←──────────────────────────┘                        │                     │
+  ↑                                                   │                     │
+  │                                          capital efficiency             │
+  │                                          exit (sell after               │
+  │                                          60+ days, no recovery)         │
+  │                                                   │                     │
+  ←───────────────────────────────────────────────────┘                     │
+  ←─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Each Cycle (`run_wheel_cycle`)
+
+Called every ~60s by the trading engine during market hours. Processes all symbols in `config.symbol_list`, sorted by stock price ascending (cheapest first for affordability gating).
+
+**Step 1: Sync Option Orders**
+
+Polls Alpaca for fills on pending option orders. When a sell option fills: credits premium to strategy cash (fill_price × 100 × contracts). When a buy-to-close (roll) fills: debits cash.
+
+**Step 2: Detect Assignments**
+
+Compares Alpaca live positions vs local DB to detect option exercises:
+
+| Scenario | Detection | Action |
+|----------|-----------|--------|
+| **Put assigned** | Option gone from Alpaca + stock appeared | Close put position, create stock position (`wheel_phase='assigned'`), debit cash (strike × 100) |
+| **Put expired OTM** | Option gone + no stock | Close put position, keep premium, back to idle |
+| **Call assigned (called away)** | Option gone + stock gone | Close call + stock positions, credit cash (strike × 100), wheel cycle complete |
+| **Call expired OTM** | Option gone + stock still held | Close call position, keep premium, back to `assigned` phase |
+
+**Step 3: Per-Symbol Processing**
+
+For each symbol, based on its current phase:
+
+- **Idle** (no open position) → `_sell_put()` — find and sell a cash-secured put
+- **Selling Puts** → `_manage_put_position()` — monitor expiration, attempt rolling if needed
+- **Assigned** (holding stock) → `_check_hard_stop()`, then `_check_capital_efficiency()`, then `_sell_call()`
+- **Selling Calls** → `_manage_call_position()` — monitor for expiration or assignment
+
+**Step 4: P&L Sync**
+
+Updates strategy-level P&L aggregates from position data.
+
+### Option Selection Logic
+
+`_select_best_option()` filters the Alpaca option chain and scores candidates:
+
+**Filters applied (all must pass):**
+1. Correct option type (put for phase 1, call for phase 3)
+2. Strike within constraint (puts: ≤ stock price; calls: ≥ min_strike from adjusted cost basis)
+3. DTE within configured range (default 7-45 days)
+4. Delta within configured range (default 0.15-0.30, using moneyness proxy if greeks unavailable)
+5. Bid > 0 (option must have a market)
+6. Annualized premium yield within range (default 4%-100%)
+
+**Scoring formula (highest score wins):**
+- 40% — Annualized yield (higher is better)
+- 30% — Delta proximity to midpoint of range (closer to 0.225 is better)
+- 30% — DTE proximity to midpoint of range (closer to 26 days is better)
+
+**Moneyness fallback:** When Alpaca doesn't return greeks (common for some option chains), delta is estimated from how far the strike is from the stock price — a rough but usable proxy.
+
+### Defensive Features
+
+**Hard Stop (`_check_hard_stop`):** Before selling a covered call on assigned stock, checks if the stock has dropped more than `max_stock_loss_pct` (default 25%) from the entry price. If so, sells the stock immediately via market order — no bagholding broken positions. Logs: `hard_stop` event with full P&L breakdown including premiums collected.
+
+**Rolling Puts (`_manage_put_position`):** When a sold put is deep in-the-money near expiration (stock > `roll_threshold_pct` below strike, DTE ≤ 3 days):
+1. Estimates buy-to-close cost from current market data
+2. Searches for a new put at a lower strike / later expiration
+3. Only executes the roll if it produces a net credit ≥ `roll_min_net_credit` ($0.10/share)
+4. Checks PDT limit before executing (rolling = 2 trades in one day)
+5. If can't roll for credit: lets assignment happen (assignment is part of the Wheel's natural flow)
+
+**Adjusted Cost Basis (`_get_adjusted_cost_basis`):** Tracks the true break-even for assigned stock by subtracting all premiums collected (from puts and prior calls) on that symbol. Used by `_sell_call()` to set intelligent strike selection — allows selling calls slightly below the raw entry price because premiums already offset some of the cost.
+
+**Capital Efficiency Exits (`_check_capital_efficiency`):** Assigned stock held for more than `capital_efficiency_days` (default 60) with no price recovery is tying up capital unproductively. If down > 15%: sells and frees the capital. If down 5-15%: sells a more aggressive call (closer to ATM) to accelerate the exit.
+
+**PDT Protection (`_would_exceed_pdt`):** Accounts under $25,000 are limited to 3 day trades per rolling 5 business days. Before executing a roll or same-day close, counts recent round-trip trades. If at limit, logs `blocked_pdt_limit` and skips the action.
+
+### Cash Management
+
+| Event | Cash Change |
+|-------|-------------|
+| Sell put fills | +premium (fill × 100) |
+| Put assigned | −(strike × 100) |
+| Sell call fills | +premium (fill × 100) |
+| Call assigned (called away) | +(strike × 100) |
+| Buy-to-close (roll) | −(fill × 100) |
+| Hard stop / efficiency sell | +proceeds |
+
+**Cash reservation:** Before selling a new put, committed cash from existing open puts is subtracted:
+```
+committed = sum(strike × 100 × contracts for each open selling_puts position)
+available = current_cash − committed
+```
+This prevents over-selling puts beyond what the account can cover if all assignments happen simultaneously.
+
+### Position Sizing ($5,000 Capital)
+
+Tickers are sorted by price ascending. At current prices (~March 2026):
+- **F** (~$10), **SOFI** (~$14): $1,000-1,400 per assignment — multiple positions possible
+- **INTC** (~$22): $2,200 — affordable one at a time
+- **BAC** (~$40): $4,000 — tight, blocks most other positions
+- **PLTR** (~$100), **AMD** (~$115): Too expensive — naturally skipped, logged as `blocked_too_expensive`
+
+### Activity Log Event Types
+
+The Wheel generates extensive activity logs for monitoring. Three categories:
+
+**Decision logs** (WHY a decision was made):
+| Event Type | When |
+|-----------|------|
+| `option_selected` | Best option chosen from chain (includes score, delta, yield, candidates evaluated) |
+| `put_sold` | Put sell order submitted (includes strike, premium, cash committed/remaining) |
+| `call_sold` | Call sell order submitted (includes strike, premium, adjusted cost basis) |
+| `roll_executed` | Put rolled to new strike/date (includes old/new symbols, net credit) |
+| `hard_stop` | Stock sold on hard stop (includes entry/exit price, loss %, premiums collected) |
+| `capital_efficiency_exit` | Stock sold after extended hold (includes days held, loss %) |
+
+**Execution logs** (what happened, when):
+| Event Type | When |
+|-----------|------|
+| `order_placed` | Order submitted to Alpaca |
+| `order_filled` | Fill confirmed (includes fill price, premium credited) |
+| `assignment` | Put exercised, now holding stock |
+| `called_away` | Call exercised, shares sold, wheel cycle complete |
+| `option_expired` | Option expired worthless (kept premium) |
+| `phase_transition` | Symbol moved to new wheel phase |
+
+**Blocked logs** (what the program wanted to do but couldn't):
+| Event Type | When |
+|-----------|------|
+| `blocked_insufficient_cash` | Wanted to sell put but can't afford assignment |
+| `blocked_too_expensive` | Ticker's shares cost more than total capital |
+| `blocked_no_options` | No contracts passed filters (includes filter breakdown) |
+| `blocked_no_greeks` | Using moneyness fallback for delta |
+| `blocked_position_exists` | Already have an open position on this symbol |
+| `blocked_roll_no_credit` | Wanted to roll but can't get net credit |
+| `blocked_pdt_limit` | Day trade would exceed 3-per-5-day PDT limit |
+
+All event details are stored in the `details` JSONB column and visible in the frontend Activity Feed via expandable detail rows.
+
 ## Safety Features
 
-| Feature | Behavior |
-|---------|----------|
-| **Circuit breaker** | Auto-pauses strategy if drawdown > `max_loss_pct` (default 20%) |
-| **Position sizing** | Max 25% of capital in a single position |
-| **Stop-loss** | Auto-sells if price drops > 10% from entry |
-| **Take-profit** | Auto-sells if price rises > 20% from entry |
-| **Market hours gate** | Only runs during US market hours (Mon-Fri, 9 AM - 4 PM ET) |
-| **AI cost cap** | Max 5 AI calls per cycle to limit GPT-4o spending |
-| **Master kill switch** | `TRADING_ENABLED=false` prevents engine from starting |
-| **Alpaca key guard** | Start endpoint returns 503 if keys aren't configured |
-| **Error resilience** | Individual strategy errors don't crash the engine; logged and retried next cycle |
+| Feature | Strategy | Behavior |
+|---------|----------|----------|
+| **Circuit breaker** | Both | Auto-pauses strategy if drawdown > `max_loss_pct` (default 20%) |
+| **Position sizing** | Simple Stock | Max 25% of capital in a single position |
+| **Stop-loss** | Simple Stock | Auto-sells if price drops > 10% from entry |
+| **Take-profit** | Simple Stock | Auto-sells if price rises > 20% from entry |
+| **Hard stop** | Wheel | Sells assigned stock if down > 25% from entry |
+| **Rolling puts** | Wheel | Rolls deep-ITM puts near expiry for net credit when possible |
+| **Capital efficiency exits** | Wheel | Reviews assigned stock held > 60 days with no recovery |
+| **Cash reservation** | Wheel | Prevents over-selling puts beyond assignment capacity |
+| **PDT protection** | Wheel | Blocks trades that would exceed 3-per-5-day day trade limit |
+| **Affordability gating** | Wheel | Skips tickers where assignment cost > available cash |
+| **Market hours gate** | Both | Only runs during US market hours (Mon-Fri, 9 AM - 4 PM ET) |
+| **AI cost cap** | Simple Stock | Max 5 AI calls per cycle to limit GPT-4o spending |
+| **Master kill switch** | Both | `TRADING_ENABLED=false` prevents engine from starting |
+| **Alpaca key guard** | Both | Start endpoint returns 503 if keys aren't configured |
+| **Error resilience** | Both | Per-strategy (and per-symbol for Wheel) try/except — one failure doesn't block others |
 
 ## Cost Estimates
 
@@ -615,5 +821,5 @@ INFO: Simple stock cycle complete
 |-------|--------|-------------|
 | **Phase 1** | Complete | DB schema, Alpaca client, trading DB helpers, API endpoints, frontend shell (strategy cards, positions/orders/activity tables, portfolio summary) |
 | **Phase 2** | Complete | Simple stock strategy (AI signals + execution), trading engine wiring, market hours gate, scanner timing (hourly → daily at 5 PM ET), RAG-enhanced trade signals (daily auto-index + filing context injection) |
-| **Phase 3** | Not started | Wheel options strategy (put/call/assignment state machine) |
-| **Phase 4** | Not started | Polish — P&L charts, strategy config modal, trading section in User Guide |
+| **Phase 3** | Complete | Wheel options strategy — state machine, option selection, defensive suite (hard stops, rolling, adjusted cost basis, capital efficiency), enhanced Activity Feed with filters/expand/date range, comprehensive observability logging |
+| **Phase 4** | Not started | Polish — P&L charts, strategy config modal, report generation, CSV export |

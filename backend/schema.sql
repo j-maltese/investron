@@ -360,7 +360,12 @@ VALUES
         "expiration_min_days": 7,
         "expiration_max_days": 45,
         "open_interest_min": 100,
-        "score_min": 0.05,
+        "max_stock_loss_pct": 25.0,
+        "roll_threshold_pct": 10.0,
+        "roll_min_net_credit": 0.10,
+        "call_min_strike_pct": -5.0,
+        "capital_efficiency_days": 60,
+        "pdt_protection": true,
         "check_interval_minutes": 15
     }'::jsonb)
 ON CONFLICT (id) DO NOTHING;

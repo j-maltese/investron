@@ -45,12 +45,42 @@ export function useOrders(strategyId?: string) {
   })
 }
 
-export function useActivityLog(strategyId?: string) {
+/**
+ * Activity log hook with support for event type filtering, date range, and pagination.
+ *
+ * The ActivityFeed component manages its own filter/pagination state and passes
+ * the params here. The query key includes all filter params so TanStack Query
+ * refetches when filters change.
+ */
+export function useActivityLog(params?: {
+  strategyId?: string
+  eventType?: string
+  dateFrom?: string
+  dateTo?: string
+  limit?: number
+  offset?: number
+  /** Set false to disable fetching — used when ActivityFeed is in compact mode
+   *  and events are supplied externally by the parent component. */
+  enabled?: boolean
+}) {
   return useQuery({
-    queryKey: ['trading-activity', strategyId],
-    queryFn: () => api.getTradingActivity({ strategy_id: strategyId, limit: 50 }),
+    queryKey: [
+      'trading-activity',
+      params?.strategyId, params?.eventType,
+      params?.dateFrom, params?.dateTo,
+      params?.limit, params?.offset,
+    ],
+    queryFn: () => api.getTradingActivity({
+      strategy_id: params?.strategyId,
+      event_type: params?.eventType,
+      date_from: params?.dateFrom,
+      date_to: params?.dateTo,
+      limit: params?.limit || 50,
+      offset: params?.offset || 0,
+    }),
     staleTime: 10_000,
-    refetchInterval: 15_000,
+    refetchInterval: params?.enabled === false ? false : 15_000,
+    enabled: params?.enabled !== false,
   })
 }
 

@@ -176,7 +176,7 @@ async def submit_option_order(
 ) -> dict:
     """Submit an option order to Alpaca."""
     from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest
-    from alpaca.trading.enums import OrderSide, TimeInForce, AssetClass
+    from alpaca.trading.enums import OrderSide, TimeInForce
 
     try:
         client = get_trading_client()
@@ -246,6 +246,85 @@ async def cancel_order(alpaca_order_id: str) -> None:
         raise AlpacaError(f"Order cancel failed: {e}") from e
 
 
+# ---------------------------------------------------------------------------
+# OCC Symbol Helpers
+# ---------------------------------------------------------------------------
+# OCC (Options Clearing Corporation) symbols encode the underlying ticker,
+# expiration date, option type, and strike price into a single string.
+# Format: {TICKER}{YYMMDD}{P|C}{STRIKE*1000 zero-padded to 8 digits}
+# Example: INTC260320P00035000 = INTC, 2026-03-20, Put, $35.00
+# The ticker is variable-length (1-6 chars), so we parse from the RIGHT:
+# the last 15 characters are always YYMMDD + P/C + 8-digit strike.
+
+
+def parse_occ_symbol(symbol: str) -> dict:
+    """Parse an OCC option symbol into its components.
+
+    Example: 'INTC260320P00035000' -> {
+        'underlying': 'INTC',
+        'expiration': '2026-03-20',
+        'option_type': 'put',
+        'strike': 35.0,
+    }
+
+    The last 15 chars are always: YYMMDD (6) + P/C (1) + strike*1000 (8).
+    Everything before that is the underlying ticker.
+    """
+    # Defensive: OCC symbols are at least 15 chars (1-char ticker + 15 suffix)
+    if len(symbol) < 16:
+        raise ValueError(f"Invalid OCC symbol (too short): {symbol}")
+
+    # Split: ticker = everything before the last 15 chars
+    suffix = symbol[-15:]
+    underlying = symbol[:-15]
+
+    # Parse the fixed-format suffix
+    yy, mm, dd = suffix[0:2], suffix[2:4], suffix[4:6]
+    option_char = suffix[6]  # 'P' for put, 'C' for call
+    strike_raw = suffix[7:15]  # 8-digit integer = strike * 1000
+
+    if option_char not in ("P", "C"):
+        raise ValueError(f"Invalid option type '{option_char}' in OCC symbol: {symbol}")
+
+    return {
+        "underlying": underlying,
+        "expiration": f"20{yy}-{mm}-{dd}",
+        "option_type": "put" if option_char == "P" else "call",
+        "strike": int(strike_raw) / 1000,
+    }
+
+
+def build_occ_symbol(
+    underlying: str,
+    expiration_date: str,
+    option_type: str,
+    strike: float,
+) -> str:
+    """Build an OCC option symbol from components.
+
+    Args:
+        underlying: Ticker symbol (e.g., 'INTC', 'F', 'SOFI')
+        expiration_date: 'YYYY-MM-DD' format (e.g., '2026-03-20')
+        option_type: 'put' or 'call'
+        strike: Strike price as float (e.g., 35.0)
+
+    Returns:
+        OCC symbol string (e.g., 'INTC260320P00035000')
+    """
+    # Extract YY, MM, DD from the ISO date string
+    yy = expiration_date[2:4]
+    mm = expiration_date[5:7]
+    dd = expiration_date[8:10]
+
+    # P for put, C for call
+    pc = "P" if option_type == "put" else "C"
+
+    # Strike is stored as an integer = price * 1000, zero-padded to 8 digits
+    strike_int = int(strike * 1000)
+
+    return f"{underlying}{yy}{mm}{dd}{pc}{strike_int:08d}"
+
+
 async def get_option_chain(
     ticker: str,
     expiration_date_gte: str | None = None,
@@ -277,6 +356,12 @@ async def get_option_chain(
                 "bid_price": float(snapshot.latest_quote.bid_price) if snapshot.latest_quote else None,
                 "ask_price": float(snapshot.latest_quote.ask_price) if snapshot.latest_quote else None,
             }
+            # Open interest — may be available on some snapshot responses.
+            # We extract it if present so _select_best_option can filter
+            # against the open_interest_min config threshold.
+            if hasattr(snapshot, "open_interest") and snapshot.open_interest is not None:
+                contract["open_interest"] = int(snapshot.open_interest)
+
             # Greeks may be available via snapshot
             if hasattr(snapshot, "greeks") and snapshot.greeks:
                 contract["delta"] = snapshot.greeks.delta
