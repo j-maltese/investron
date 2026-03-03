@@ -102,10 +102,9 @@ async def run_trading_cycle() -> None:
 
                     from app.services.simple_stock_strategy import run_simple_stock_cycle
                     await run_simple_stock_cycle(db, strategy)
-                # elif strategy_type == "wheel":
-                #     TODO Phase 3: Wheel strategy
-                #     from app.services.wheel_strategy import run_wheel_cycle
-                #     await run_wheel_cycle(db, strategy)
+                elif strategy_type == "wheel":
+                    from app.services.wheel_strategy import run_wheel_cycle
+                    await run_wheel_cycle(db, strategy)
 
                 # Update last_run timestamp
                 await trading_db.update_strategy(

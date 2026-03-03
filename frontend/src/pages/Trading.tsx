@@ -23,15 +23,17 @@ export function Trading() {
   const { data: portfolio, isLoading: portfolioLoading } = usePortfolio()
   const { data: positionsData } = usePositions()
   const { data: ordersData } = useOrders()
-  const { data: activityData } = useActivityLog()
+  // Fetch a small batch of recent events for the Overview tab's "Recent Activity"
+  // section. The full Activity tab manages its own data fetching internally.
+  const { data: activityData } = useActivityLog({ limit: 5 })
 
   const strategies = strategiesData?.strategies || []
   const positions = positionsData?.positions || []
   const positionsCount = positionsData?.total_count || 0
   const orders = ordersData?.orders || []
   const ordersCount = ordersData?.total_count || 0
-  const events = activityData?.events || []
-  const eventsCount = activityData?.total_count || 0
+  const recentEvents = activityData?.events || []
+  const recentEventsCount = activityData?.total_count || 0
 
   return (
     <PageLayout>
@@ -86,11 +88,11 @@ export function Trading() {
                 </div>
               )}
 
-              {/* Quick view: recent activity */}
-              {events.length > 0 && (
+              {/* Quick view: recent activity (compact mode — no filters/expand) */}
+              {recentEvents.length > 0 && (
                 <div>
                   <h3 className="text-sm font-medium text-[var(--muted-foreground)] mb-2">Recent Activity</h3>
-                  <ActivityFeed events={events.slice(0, 5)} totalCount={eventsCount} />
+                  <ActivityFeed compact events={recentEvents} totalCount={recentEventsCount} />
                 </div>
               )}
             </div>
@@ -105,7 +107,7 @@ export function Trading() {
           )}
 
           {activeTab === 'activity' && (
-            <ActivityFeed events={events} totalCount={eventsCount} />
+            <ActivityFeed />
           )}
         </div>
       </div>

@@ -332,16 +332,45 @@ async def log_activity(
 async def get_activity_log(
     db: AsyncSession,
     strategy_id: str | None = None,
+    event_type: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[dict], int]:
-    """Fetch paginated activity log, newest first."""
+    """Fetch paginated activity log, newest first.
+
+    Supports filtering by:
+      - strategy_id: single strategy
+      - event_type: exact match (e.g., 'order_filled') or prefix match for
+        category filters (e.g., 'blocked' matches all blocked_* events)
+      - date_from / date_to: ISO date strings for date range filtering
+    """
     where_parts = []
     params: dict = {"limit": limit, "offset": offset}
 
     if strategy_id:
         where_parts.append("strategy_id = :sid")
         params["sid"] = strategy_id
+
+    if event_type:
+        # Support prefix matching: "blocked" matches "blocked_insufficient_cash", etc.
+        # This enables the frontend's category filter pills.
+        if event_type in ("blocked", "order", "option", "capital"):
+            where_parts.append("event_type LIKE :etype")
+            params["etype"] = f"{event_type}%"
+        else:
+            where_parts.append("event_type = :etype")
+            params["etype"] = event_type
+
+    if date_from:
+        where_parts.append("created_at >= :date_from::timestamptz")
+        params["date_from"] = date_from
+
+    if date_to:
+        # Include the full end date (through end of day)
+        where_parts.append("created_at < (:date_to::date + interval '1 day')")
+        params["date_to"] = date_to
 
     where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
 
