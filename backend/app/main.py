@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.models.database import init_db
-from app.api import companies, financials, filings, watchlist, valuation, release_notes, screener, ai, indexing
+from app.api import companies, financials, filings, watchlist, valuation, release_notes, screener, ai, indexing, trading
 from app.auth import routes as auth_routes
 from app.services.scanner import scanner_loop
 
@@ -28,18 +28,19 @@ for _candidate in [
         break
 
 
-# Background scanner task reference — kept at module level so we can cancel on shutdown
+# Background task references — kept at module level so we can cancel on shutdown
 _scanner_task: asyncio.Task | None = None
+_trading_task: asyncio.Task | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """FastAPI lifespan: initialize DB and optionally start the background scanner.
+    """FastAPI lifespan: initialize DB and optionally start background tasks.
 
-    The scanner runs as an asyncio task for the lifetime of the app, continuously
-    scoring S&P 500 stocks even when no users are logged in.
+    The scanner and trading engine run as asyncio tasks for the lifetime of the app,
+    continuously working even when no users are logged in.
     """
-    global _scanner_task
+    global _scanner_task, _trading_task
     init_db()
 
     settings = get_settings()
@@ -49,15 +50,23 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Background scanner is disabled (SCANNER_ENABLED=false)")
 
+    if settings.trading_enabled:
+        from app.services.trading_engine import trading_loop
+        logger.info("Starting trading engine task...")
+        _trading_task = asyncio.create_task(trading_loop())
+    else:
+        logger.info("Trading engine is disabled (TRADING_ENABLED=false)")
+
     yield
 
-    # Graceful shutdown: cancel the scanner if it's running
-    if _scanner_task and not _scanner_task.done():
-        _scanner_task.cancel()
-        try:
-            await _scanner_task
-        except asyncio.CancelledError:
-            pass
+    # Graceful shutdown: cancel background tasks
+    for task_name, task in [("scanner", _scanner_task), ("trading", _trading_task)]:
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 settings = get_settings()
@@ -96,6 +105,7 @@ app.include_router(release_notes.router, prefix="/api/release-notes", tags=["rel
 app.include_router(screener.router, prefix="/api/screener", tags=["screener"])
 app.include_router(ai.router, prefix="/api/ai", tags=["ai"])
 app.include_router(indexing.router, prefix="/api/ai/filings", tags=["filing-indexing"])
+app.include_router(trading.router, prefix="/api/trading", tags=["trading"])
 
 
 @app.get("/health")

@@ -4,6 +4,7 @@ import type {
   GrahamScoreResponse, GrowthMetrics, FilingsResponse, DCFInput, DCFResult,
   ScenarioModelInput, ScenarioResult, WatchlistItem, Alert, ReleaseNotesResponse,
   ScreenerResultsResponse, ScannerStatus, ChatRequest, FilingIndexStatus,
+  TradingStrategy, TradingPosition, TradingOrder, TradingActivityEvent, TradingPortfolio,
 } from './types'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
@@ -145,6 +146,76 @@ export const api = {
     apiFetch<{ message: string }>(`/api/ai/filings/${ticker}/index`, {
       method: 'DELETE',
     }),
+
+  // Paper Trading
+  getStrategies: () =>
+    apiFetch<{ strategies: TradingStrategy[] }>('/api/trading/strategies'),
+
+  getStrategy: (strategyId: string) =>
+    apiFetch<TradingStrategy>(`/api/trading/strategies/${strategyId}`),
+
+  startStrategy: (strategyId: string) =>
+    apiFetch<{ message: string; status: string }>(`/api/trading/strategies/${strategyId}/start`, {
+      method: 'POST',
+    }),
+
+  stopStrategy: (strategyId: string) =>
+    apiFetch<{ message: string; status: string }>(`/api/trading/strategies/${strategyId}/stop`, {
+      method: 'POST',
+    }),
+
+  pauseStrategy: (strategyId: string) =>
+    apiFetch<{ message: string; status: string }>(`/api/trading/strategies/${strategyId}/pause`, {
+      method: 'POST',
+    }),
+
+  updateStrategyConfig: (strategyId: string, config: Record<string, unknown>) =>
+    apiFetch<TradingStrategy>(`/api/trading/strategies/${strategyId}/config`, {
+      method: 'PATCH',
+      body: JSON.stringify({ config }),
+    }),
+
+  resetStrategy: (strategyId: string) =>
+    apiFetch<{ message: string }>(`/api/trading/strategies/${strategyId}/reset`, {
+      method: 'POST',
+    }),
+
+  getTradingPositions: (params?: { strategy_id?: string; status?: string; limit?: number; offset?: number }) => {
+    const sp = new URLSearchParams()
+    if (params?.strategy_id) sp.set('strategy_id', params.strategy_id)
+    if (params?.status) sp.set('status', params.status)
+    if (params?.limit) sp.set('limit', String(params.limit))
+    if (params?.offset) sp.set('offset', String(params.offset))
+    const qs = sp.toString()
+    return apiFetch<{ positions: TradingPosition[]; total_count: number }>(
+      `/api/trading/positions${qs ? `?${qs}` : ''}`
+    )
+  },
+
+  getTradingOrders: (params?: { strategy_id?: string; limit?: number; offset?: number }) => {
+    const sp = new URLSearchParams()
+    if (params?.strategy_id) sp.set('strategy_id', params.strategy_id)
+    if (params?.limit) sp.set('limit', String(params.limit))
+    if (params?.offset) sp.set('offset', String(params.offset))
+    const qs = sp.toString()
+    return apiFetch<{ orders: TradingOrder[]; total_count: number }>(
+      `/api/trading/orders${qs ? `?${qs}` : ''}`
+    )
+  },
+
+  getTradingActivity: (params?: { strategy_id?: string; limit?: number; offset?: number }) => {
+    const sp = new URLSearchParams()
+    if (params?.strategy_id) sp.set('strategy_id', params.strategy_id)
+    if (params?.limit) sp.set('limit', String(params.limit))
+    if (params?.offset) sp.set('offset', String(params.offset))
+    const qs = sp.toString()
+    return apiFetch<{ events: TradingActivityEvent[]; total_count: number }>(
+      `/api/trading/activity${qs ? `?${qs}` : ''}`
+    )
+  },
+
+  getTradingPortfolio: () =>
+    apiFetch<TradingPortfolio>('/api/trading/portfolio'),
 
   // AI Chat — raw SSE stream (not apiFetch, which expects JSON)
   streamAIChat: async function* (

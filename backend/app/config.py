@@ -41,12 +41,24 @@ class Settings(BaseSettings):
     filing_index_max_10q: int = 5            # Most recent N quarterly filings to index
     filing_index_max_8k: int = 10            # Most recent N current reports (small docs, material events)
 
+    # Paper Trading (Alpaca Markets)
+    alpaca_api_key: str = ""              # Empty = trading features disabled
+    alpaca_secret_key: str = ""
+    alpaca_base_url: str = "https://paper-api.alpaca.markets"  # Paper trading default
+    alpaca_data_url: str = "https://data.alpaca.markets"
+    trading_enabled: bool = False         # Master kill switch (like scanner_enabled)
+    trading_check_interval: int = 60      # Seconds between strategy check cycles
+    trading_auto_index_top_n: int = 10   # Top screener tickers to auto-index daily for RAG
+    trading_rag_max_tokens: int = 2000   # Max filing context tokens per trade signal prompt
+    trading_rag_enabled: bool = True     # Kill switch for RAG without disabling trading
+
     # Value Screener background scanner settings
     # All configurable via env vars (e.g. SCANNER_ENABLED=false for local dev)
     scanner_enabled: bool = True          # Set False to disable background scanning
     scanner_batch_size: int = 10          # Tickers fetched per batch
     scanner_batch_delay: float = 5.0      # Seconds between batches (respects rate limiter)
-    scanner_interval_seconds: int = 3600  # Seconds between full scans (1 hour)
+    scanner_interval_seconds: int = 86400  # Seconds between full scans (24 hours)
+    scanner_preferred_hour_utc: int = 21  # Preferred scan start hour in UTC (21 = 5 PM ET / 4 PM EDT)
     scanner_ticker_timeout: int = 15      # Per-ticker yfinance fetch timeout
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}

@@ -252,6 +252,98 @@ export interface FilingIndexStatus {
   filing_type_breakdown?: Record<string, number>  // e.g. {"10-K": 3, "10-Q": 5, "8-K": 7}
 }
 
+// Paper Trading
+export interface TradingStrategy {
+  id: string
+  display_name: string
+  strategy_type: 'simple_stock' | 'wheel'
+  status: 'stopped' | 'running' | 'paused' | 'error'
+  initial_capital: number
+  current_cash: number
+  current_portfolio_value: number
+  total_pnl: number
+  total_pnl_pct: number
+  realized_pnl: number
+  unrealized_pnl: number
+  config: Record<string, unknown>
+  max_loss_pct: number
+  max_position_pct: number
+  last_run_at?: string
+  last_error?: string
+  error_count?: number
+  created_at: string
+  updated_at: string
+}
+
+export interface TradingPosition {
+  id: number
+  strategy_id: string
+  ticker: string
+  asset_type: 'stock' | 'option'
+  quantity?: number
+  avg_entry_price?: number
+  option_symbol?: string
+  option_type?: 'put' | 'call'
+  strike_price?: number
+  expiration_date?: string
+  contracts?: number
+  wheel_phase?: 'selling_puts' | 'assigned' | 'selling_calls'
+  cost_basis?: number
+  current_value?: number
+  realized_pnl: number
+  unrealized_pnl: number
+  status: 'open' | 'closed' | 'assigned' | 'expired'
+  opened_at: string
+  closed_at?: string
+  close_reason?: string
+}
+
+export interface TradingOrder {
+  id: number
+  strategy_id: string
+  ticker: string
+  asset_type: 'stock' | 'option'
+  side: 'buy' | 'sell'
+  order_type: string
+  time_in_force?: string
+  quantity?: number
+  limit_price?: number
+  stop_price?: number
+  option_symbol?: string
+  option_type?: 'put' | 'call'
+  strike_price?: number
+  expiration_date?: string
+  contracts?: number
+  filled_quantity?: number
+  filled_avg_price?: number
+  filled_at?: string
+  status: string
+  reason?: string
+  ai_signal?: Record<string, unknown>
+  submitted_at: string
+  updated_at: string
+}
+
+export interface TradingActivityEvent {
+  id: number
+  strategy_id: string
+  event_type: string
+  ticker?: string
+  message: string
+  details: Record<string, unknown>
+  created_at: string
+}
+
+export interface TradingPortfolio {
+  total_value: number
+  total_cash: number
+  total_portfolio_value: number
+  total_initial_capital: number
+  total_pnl: number
+  total_pnl_pct: number
+  strategies: TradingStrategy[]
+}
+
 // AI Chat
 export interface ChatMessage {
   id: string
