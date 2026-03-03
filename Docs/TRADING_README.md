@@ -51,10 +51,14 @@ Trading Engine (background loop, runs every 60s during market hours)
 ┌──────────────────────────────────────────────────────────────┐
 │  Frontend (/trading page, polls every 15-30s)                 │
 │                                                               │
-│  Overview tab:    Portfolio summary + strategy cards           │
+│  Overview tab:    Portfolio summary + strategy cards + recent  │
+│                   activity (compact view)                      │
 │  Positions tab:   Open/closed positions with P&L              │
 │  Orders tab:      Complete order history with AI signals       │
-│  Activity tab:    Event stream (orders, fills, errors, etc.)  │
+│  Activity tab:    Event stream with filter pills (Decisions / │
+│                   Executions / Blocked / Errors), date range   │
+│                   picker, expandable JSONB detail rows, and    │
+│                   load-more pagination                         │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -337,8 +341,10 @@ frontend/src/
 │                                  # resetStrategy, updateStrategyConfig, getTradingPositions,
 │                                  # getTradingOrders, getTradingActivity, getTradingPortfolio
 ├── hooks/
-│   └── useTrading.ts             # TanStack Query hooks (30s polling) + mutations
+│   └── useTrading.ts             # TanStack Query hooks (15-30s polling) + mutations
 │                                  #   useStrategies, usePortfolio, usePositions, useOrders, useActivityLog
+│                                  #   useActivityLog supports filter params (eventType, dateFrom, dateTo)
+│                                  #   and `enabled` flag for conditional fetching (compact mode)
 │                                  #   useStartStrategy, useStopStrategy, usePauseStrategy, useResetStrategy
 │
 ├── pages/
@@ -349,7 +355,12 @@ frontend/src/
     ├── PortfolioSummary.tsx       # Combined portfolio value with "Paper" badge
     ├── PositionsTable.tsx         # Table with wheel phase indicators, P&L coloring
     ├── OrdersTable.tsx            # Order history with status badges
-    └── ActivityFeed.tsx           # Event stream with Lucide icons per event type
+    └── ActivityFeed.tsx           # Two modes: compact (Overview tab, props-driven) and
+                                    #   full (Activity tab, self-managing with useActivityLog).
+                                    #   Full mode: filter pills (All/Decisions/Executions/Blocked/Errors),
+                                    #   date range picker with presets, expandable JSONB detail rows
+                                    #   with "reason" field highlighted, load-more pagination.
+                                    #   23 event type icons + prefix matching for blocked_* events
 ```
 
 ## API Endpoints

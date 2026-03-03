@@ -18,7 +18,7 @@ export function GrowthLens({ ticker }: GrowthLensProps) {
   if (isLoading) return <div className="text-[var(--muted-foreground)]">Loading growth metrics...</div>
   if (!data) return null
 
-  const revenueGrowthData = data.revenue_growth_rates.map((r: { period: string; growth_rate: number }) => ({
+  const revenueGrowthData = (data.revenue_growth_rates ?? []).map((r: { period: string; growth_rate: number }) => ({
     period: r.period.slice(0, 4), // Just the year
     growth: +(r.growth_rate * 100).toFixed(1),
   }))
