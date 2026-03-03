@@ -1,5 +1,5 @@
 import {
-  ArrowDownCircle, ArrowUpCircle, AlertTriangle, Play, Pause, Square,
+  ArrowDownCircle, ArrowUpCircle, AlertTriangle, Play, Square,
   RotateCcw, CircleDot, ShieldAlert, Settings,
 } from 'lucide-react'
 import type { TradingActivityEvent } from '@/lib/types'
