@@ -34,5 +34,8 @@ beautifulsoup4==4.12.3
 markdownify==0.14.1
 tiktoken==0.8.0
 
+# Paper Trading (Alpaca Markets)
+alpaca-py>=0.30.0
+
 # Utilities
 python-dateutil==2.9.0

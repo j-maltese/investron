@@ -3,6 +3,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { Login } from '@/pages/Login'
 import { Dashboard } from '@/pages/Dashboard'
 import { Research } from '@/pages/Research'
+import { Trading } from '@/pages/Trading'
 import { Docs } from '@/pages/Docs'
 
 export function App() {
@@ -24,6 +25,7 @@ export function App() {
     <Routes>
       <Route path="/" element={<Dashboard />} />
       <Route path="/research/:ticker" element={<Research />} />
+      <Route path="/trading" element={<Trading />} />
       <Route path="/docs" element={<Docs />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

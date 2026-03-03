@@ -1,4 +1,4 @@
-"""Background scanner — continuously scores stocks across multiple indices for the value screener.
+"""Background scanner — scores stocks across multiple indices for the value screener.
 
 Architecture:
   - scanner_loop() is an infinite async coroutine started from FastAPI's lifespan.
@@ -8,10 +8,16 @@ Architecture:
   - After a full scan, ranks are recalculated via SQL window function.
   - The scanner_status table (single row) tracks progress for the frontend.
 
+Scheduling:
+  - Runs once daily, targeting scanner_preferred_hour_utc (default 21 = 5 PM ET).
+  - On startup, runs immediately if preferred hour has already passed today (catch-up).
+  - After each scan, sleeps until the next preferred hour.
+  - Fundamental data doesn't change intraday, so once daily is sufficient.
+
 Rate limiting strategy:
   - Batch of 10 tickers scored concurrently (rate limiter queues excess requests).
   - 5-second delay between batches leaves headroom for user requests on the Research page.
-  - Full scan of ~2000 unique tickers takes ~35 minutes. Scan repeats every hour.
+  - Full scan of ~2000 unique tickers takes ~35 minutes.
 
 Error resilience:
   - Individual ticker failures are logged and skipped — one bad ticker doesn't stop the scan.
@@ -22,7 +28,7 @@ Error resilience:
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import text
 
@@ -271,20 +277,59 @@ async def run_full_scan() -> None:
                 scanned, errors, len(tickers))
 
 
+def _seconds_until_preferred_hour(preferred_hour: int) -> float:
+    """Calculate seconds until the next occurrence of preferred_hour UTC.
+
+    If the preferred hour hasn't passed yet today, returns time until today's occurrence.
+    If it has already passed, returns time until tomorrow's occurrence.
+    """
+    now = datetime.now(timezone.utc)
+    target_today = now.replace(hour=preferred_hour, minute=0, second=0, microsecond=0)
+
+    if now < target_today:
+        return (target_today - now).total_seconds()
+    # Already past today's target — schedule for tomorrow
+    target_tomorrow = target_today + timedelta(days=1)
+    return (target_tomorrow - now).total_seconds()
+
+
 async def scanner_loop() -> None:
-    """Infinite loop that runs full scans at regular intervals.
+    """Infinite loop that runs a full scan once daily at the preferred hour.
 
     Started as an asyncio.Task from FastAPI's lifespan context manager.
     Runs independently of HTTP requests — no user login needed.
     The loop never exits on its own; it's cancelled when the app shuts down.
+
+    Scheduling: targets scanner_preferred_hour_utc (default 21 = 5 PM ET).
+    On first startup, runs immediately to ensure data is fresh, then sleeps
+    until the next preferred hour.
     """
     settings = get_settings()
-    logger.info("Background scanner starting (interval=%ds)...", settings.scanner_interval_seconds)
+    preferred_hour = settings.scanner_preferred_hour_utc
+    logger.info(
+        "Background scanner starting (daily at %02d:00 UTC)...",
+        preferred_hour,
+    )
 
     # Brief delay: let the app finish starting and DB connections warm up
     await asyncio.sleep(2)
 
+    # Run immediately on startup to ensure fresh data
+    first_run = True
+
     while True:
+        if not first_run:
+            # Sleep until the next preferred hour
+            sleep_secs = _seconds_until_preferred_hour(preferred_hour)
+            hours_until = sleep_secs / 3600
+            logger.info(
+                "Next scan in %.1f hours (at %02d:00 UTC)",
+                hours_until, preferred_hour,
+            )
+            await asyncio.sleep(sleep_secs)
+
+        first_run = False
+
         try:
             await run_full_scan()
         except Exception as e:
@@ -300,9 +345,6 @@ async def scanner_loop() -> None:
                         )
             except Exception:
                 pass  # Don't let status update failures cascade
-            # Wait before retrying after an error
-            await asyncio.sleep(60)
+            # Wait 5 min before retrying after an error (not a full day)
+            await asyncio.sleep(300)
             continue
-
-        logger.info("Next scan in %d seconds", settings.scanner_interval_seconds)
-        await asyncio.sleep(settings.scanner_interval_seconds)

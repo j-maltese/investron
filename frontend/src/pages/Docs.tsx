@@ -81,6 +81,7 @@ function UserGuide() {
         <SubSection title="Navigation">
           <ul className="list-disc pl-5 space-y-1">
             <li><strong>Dashboard</strong> — Your watchlist and price alerts</li>
+            <li><strong>Trading</strong> — Automated paper trading strategies (see section 10)</li>
             <li><strong>Search bar</strong> — Type any ticker (e.g., AAPL, NVDA) to jump to its Research page</li>
             <li><strong>Docs</strong> — This documentation page</li>
             <li><strong>Theme toggle</strong> — Switch between dark and light modes (moon/sun icon)</li>
@@ -123,8 +124,8 @@ function UserGuide() {
       <Section title="3. Value Screener">
         <p>
           Below the Watchlist, the <strong>Value Screener</strong> panel ranks all S&P 500 companies (~500 stocks)
-          by a composite value score inspired by Benjamin Graham and Warren Buffett. A background engine continuously
-          re-scores every stock roughly once per hour — no action needed from you.
+          by a composite value score inspired by Benjamin Graham and Warren Buffett. A background engine
+          re-scores every stock once daily at market close — no action needed from you.
         </p>
         <SubSection title="How the composite score works">
           <p>
@@ -161,7 +162,7 @@ function UserGuide() {
             <li><strong>Sector filter</strong> — Use the dropdown to filter by GICS sector (e.g., Technology, Healthcare).</li>
             <li><strong>Add to Watchlist</strong> — Click the + icon on any row to add it to your personal Watchlist above.</li>
             <li><strong>Research link</strong> — Click the arrow icon or the ticker name to open the full Research page for that stock.</li>
-            <li><strong>Auto-refresh</strong> — The background scanner re-scores all stocks approximately every hour. The "Updated" timestamp shows when the last scan completed.</li>
+            <li><strong>Auto-refresh</strong> — The background scanner re-scores all stocks once daily at market close (~5 PM ET). The "Updated" timestamp shows when the last scan completed.</li>
           </ul>
         </SubSection>
         <SubSection title="Important notes">
@@ -196,8 +197,8 @@ function UserGuide() {
           <li><strong>Key Metrics</strong> — A grid of important financial ratios and figures:
             P/E ratio, P/B ratio, market cap, dividend yield, 52-week high/low, profit margins, ROE, debt-to-equity, and more.
           </li>
-          <li><strong>Graham Score</strong> — Benjamin Graham's evaluation (see section 10 below for details).</li>
-          <li><strong>Growth Lens</strong> — Metrics designed for pre-profit or high-growth companies (see section 11).</li>
+          <li><strong>Graham Score</strong> — Benjamin Graham's evaluation (see section 11 below for details).</li>
+          <li><strong>Growth Lens</strong> — Metrics designed for pre-profit or high-growth companies (see section 12).</li>
           <li><strong>Price chart</strong> — Historical stock price visualization.</li>
         </ul>
       </Section>
@@ -361,7 +362,85 @@ function UserGuide() {
         </SubSection>
       </Section>
 
-      <Section title="10. Graham Score">
+      <Section title="10. Paper Trading">
+        <p>
+          The <strong>Trading</strong> page lets Investron automatically trade on your behalf using
+          Alpaca Markets' paper trading API. This is <strong>simulated trading with fake money</strong> —
+          no real funds are at risk. Two independent strategies are available:
+        </p>
+        <SubSection title="Strategies">
+          <ul className="list-disc pl-5 space-y-1.5">
+            <li><strong>Simple Stock Trading ($500)</strong> — AI-powered buying and selling of common stock.
+              Uses the screener's composite scores as a free first filter, then sends top candidates to GPT-4o
+              for a buy/hold/sell signal with confidence rating. The AI receives full financial statements and,
+              when available, relevant excerpts from SEC filings (risk factors, MD&A, guidance) for deeper analysis.
+              Only high-conviction signals are executed.</li>
+            <li><strong>The Wheel Strategy ($5,000)</strong> — A mechanical options strategy: sell cash-secured puts
+              on affordable stocks, get assigned if the put expires in-the-money, then sell covered calls until the
+              stock is called away. Repeats for steady premium income. <em>(Coming soon — Phase 3.)</em></li>
+          </ul>
+        </SubSection>
+        <SubSection title="Page tabs">
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>Overview</strong> — Portfolio summary (total value, P&L) and strategy cards showing status, capital, and controls.</li>
+            <li><strong>Positions</strong> — All open and closed positions with entry price, current value, and P&L.</li>
+            <li><strong>Order History</strong> — Every order submitted to Alpaca, including the AI reasoning that triggered each trade.</li>
+            <li><strong>Activity Log</strong> — Event stream: orders placed, fills received, strategy starts/stops, errors, and circuit breaker events.</li>
+          </ul>
+        </SubSection>
+        <SubSection title="Starting a strategy">
+          <ol className="list-decimal pl-5 space-y-1">
+            <li>Ensure Alpaca API keys are configured and <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">TRADING_ENABLED=true</code> is set in the backend environment.</li>
+            <li>Navigate to the Trading page.</li>
+            <li>Click the <strong>Start</strong> button on a strategy card.</li>
+            <li>The trading engine will begin running cycles during US market hours (Mon-Fri, 9 AM - 4 PM ET).</li>
+          </ol>
+          <p>
+            You can <strong>Pause</strong> (monitor positions but open no new trades), <strong>Stop</strong> (cease all activity),
+            or <strong>Reset</strong> (return to initial capital) at any time using the buttons on each strategy card.
+          </p>
+        </SubSection>
+        <SubSection title="How Simple Stock Trading works">
+          <p>Each cycle (approximately every 30 minutes during market hours):</p>
+          <ol className="list-decimal pl-5 space-y-1">
+            <li><strong>Sync orders</strong> — Checks Alpaca for fills on pending orders and updates local records.</li>
+            <li><strong>Check sells</strong> — For each open position: triggers stop-loss if price dropped &gt;10% from entry,
+              take-profit if price rose &gt;20%, or asks GPT-4o whether to sell.</li>
+            <li><strong>Find buys</strong> — Pulls the top 20 stocks from the screener by composite score.
+              Filters by minimum score (60+), then asks GPT-4o for a buy signal (max 5 AI calls per cycle to control costs).
+              High-confidence buys are executed as market orders, sized at up to 25% of strategy capital per position.</li>
+          </ol>
+        </SubSection>
+        <SubSection title="Automatic filing research">
+          <p>
+            Once per day, the trading engine automatically indexes SEC filings (10-K, 10-Q, 8-K) for the top 10
+            screener candidates. This uses the same indexing pipeline as the AI Analysis tab's "Filing Deep Search."
+            When the AI evaluates a trade signal, it searches these indexed filings for relevant excerpts —
+            risk factors, management commentary, and forward guidance — and factors them into its decision.
+            Tickers that haven't been indexed yet still receive signals based on financial metrics alone.
+          </p>
+        </SubSection>
+        <SubSection title="Safety features">
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>Circuit breaker</strong> — Automatically pauses the strategy if total drawdown exceeds 20% of initial capital.</li>
+            <li><strong>Position limits</strong> — No single position can exceed 25% of capital.</li>
+            <li><strong>Stop-loss / take-profit</strong> — Automatic sell triggers at -10% and +20%.</li>
+            <li><strong>Market hours only</strong> — The engine only runs during US market hours to avoid stale quotes.</li>
+            <li><strong>AI cost cap</strong> — Max 5 GPT-4o calls per cycle keeps API costs predictable (~$0.40-1.20/day).</li>
+            <li><strong>Master kill switch</strong> — <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">TRADING_ENABLED=false</code> prevents the engine from starting entirely.</li>
+          </ul>
+        </SubSection>
+        <SubSection title="Important notes">
+          <ul className="list-disc pl-5 space-y-1">
+            <li>This is <strong>paper trading only</strong> — no real money is involved. All trades execute against Alpaca's simulated market.</li>
+            <li>The two strategies share one Alpaca paper account but track capital independently in the database ($500 vs $5,000).</li>
+            <li>AI trade signals are logged on every order for full audit trail — see the Order History tab for the reasoning behind each trade.</li>
+            <li>The AI is for experimentation, not financial advice. Past simulated performance does not predict future results.</li>
+          </ul>
+        </SubSection>
+      </Section>
+
+      <Section title="11. Graham Score">
         <p>
           The Graham Score evaluates a stock against Benjamin Graham's 7 criteria for defensive investors,
           as described in <em>The Intelligent Investor</em>. Each criterion is shown with a green checkmark
@@ -398,7 +477,7 @@ function UserGuide() {
         </SubSection>
       </Section>
 
-      <Section title="11. Growth Lens">
+      <Section title="12. Growth Lens">
         <p>
           The Growth Lens appears on the Overview tab and provides metrics specifically designed for
           <strong> pre-profit and high-growth companies</strong> (like JOBY or early-stage tech companies)
@@ -418,7 +497,7 @@ function UserGuide() {
         </SubSection>
       </Section>
 
-      <Section title="12. Data Sources & Freshness">
+      <Section title="13. Data Sources & Freshness">
         <p>
           Investron uses two primary data sources, both free and publicly available:
         </p>

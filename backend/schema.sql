@@ -205,3 +205,162 @@ CREATE INDEX IF NOT EXISTS idx_fc_filing_date ON filing_chunks(filing_date DESC)
 CREATE INDEX IF NOT EXISTS idx_fc_filing_id ON filing_chunks(filing_id);
 CREATE INDEX IF NOT EXISTS idx_fc_embedding ON filing_chunks
     USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
+
+-- =====================================================================
+-- Paper Trading: automated strategy execution via Alpaca Markets API
+-- =====================================================================
+
+-- Trading strategies — one row per configured strategy (simple_stock, wheel).
+-- Each strategy has independent capital, state, and JSONB config.
+CREATE TABLE IF NOT EXISTS trading_strategies (
+    id VARCHAR(30) PRIMARY KEY,
+    display_name VARCHAR(100) NOT NULL,
+    strategy_type VARCHAR(30) NOT NULL,       -- 'simple_stock' or 'wheel'
+    status VARCHAR(20) NOT NULL DEFAULT 'stopped',  -- stopped | running | paused | error
+    initial_capital DECIMAL(12,2) NOT NULL,
+    current_cash DECIMAL(12,2) NOT NULL,
+    current_portfolio_value DECIMAL(12,2) DEFAULT 0,
+    total_pnl DECIMAL(12,2) DEFAULT 0,
+    total_pnl_pct DECIMAL(8,4) DEFAULT 0,
+    realized_pnl DECIMAL(12,2) DEFAULT 0,
+    unrealized_pnl DECIMAL(12,2) DEFAULT 0,
+
+    -- Strategy-specific config (different shapes per strategy type)
+    config JSONB NOT NULL DEFAULT '{}'::jsonb,
+
+    -- Safety limits
+    max_loss_pct DECIMAL(6,2) DEFAULT 20.0,       -- Pause strategy if drawdown exceeds this
+    max_position_pct DECIMAL(6,2) DEFAULT 25.0,    -- Max % of capital in a single position
+
+    last_run_at TIMESTAMPTZ,
+    last_error TEXT,
+    error_count INT DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Trading positions — open and historical positions for all strategies.
+-- Option positions use option_* fields; stock positions leave them null.
+CREATE TABLE IF NOT EXISTS trading_positions (
+    id SERIAL PRIMARY KEY,
+    strategy_id VARCHAR(30) NOT NULL REFERENCES trading_strategies(id),
+    ticker VARCHAR(10) NOT NULL,
+    asset_type VARCHAR(10) NOT NULL DEFAULT 'stock',  -- 'stock' or 'option'
+
+    -- Stock fields
+    quantity DECIMAL(12,4) DEFAULT 0,
+    avg_entry_price DECIMAL(12,4),
+
+    -- Option fields (null for stock positions)
+    option_symbol VARCHAR(50),
+    option_type VARCHAR(4),           -- 'put' or 'call'
+    strike_price DECIMAL(12,2),
+    expiration_date DATE,
+    contracts INT,
+
+    -- Wheel strategy phase tracking
+    wheel_phase VARCHAR(20),          -- 'selling_puts' | 'assigned' | 'selling_calls' | null
+
+    -- P&L tracking
+    cost_basis DECIMAL(12,2),
+    current_value DECIMAL(12,2),
+    realized_pnl DECIMAL(12,2) DEFAULT 0,
+    unrealized_pnl DECIMAL(12,2) DEFAULT 0,
+
+    status VARCHAR(20) NOT NULL DEFAULT 'open',  -- open | closed | assigned | expired
+    opened_at TIMESTAMPTZ DEFAULT NOW(),
+    closed_at TIMESTAMPTZ,
+    close_reason VARCHAR(50),         -- sold | assigned | expired | stop_loss | called_away
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tp_strategy ON trading_positions(strategy_id);
+CREATE INDEX IF NOT EXISTS idx_tp_strategy_status ON trading_positions(strategy_id, status);
+CREATE INDEX IF NOT EXISTS idx_tp_ticker ON trading_positions(ticker);
+
+-- Trading orders — every order submitted to Alpaca, with local metadata.
+CREATE TABLE IF NOT EXISTS trading_orders (
+    id SERIAL PRIMARY KEY,
+    strategy_id VARCHAR(30) NOT NULL REFERENCES trading_strategies(id),
+    position_id INT REFERENCES trading_positions(id),
+    alpaca_order_id VARCHAR(50) UNIQUE,
+
+    ticker VARCHAR(10) NOT NULL,
+    asset_type VARCHAR(10) NOT NULL DEFAULT 'stock',
+    side VARCHAR(10) NOT NULL,                -- 'buy' or 'sell'
+    order_type VARCHAR(20) NOT NULL,          -- market | limit | stop | stop_limit
+    time_in_force VARCHAR(10) DEFAULT 'day',
+
+    quantity DECIMAL(12,4),
+    limit_price DECIMAL(12,4),
+    stop_price DECIMAL(12,4),
+
+    -- Option fields
+    option_symbol VARCHAR(50),
+    option_type VARCHAR(4),
+    strike_price DECIMAL(12,2),
+    expiration_date DATE,
+    contracts INT,
+
+    -- Fill info (updated when order fills)
+    filled_quantity DECIMAL(12,4),
+    filled_avg_price DECIMAL(12,4),
+    filled_at TIMESTAMPTZ,
+
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',  -- pending | submitted | filled | partially_filled | cancelled | rejected
+
+    -- Decision audit trail
+    reason TEXT,                       -- Human-readable explanation
+    ai_signal JSONB,                  -- AI analysis that triggered this trade (simple_stock only)
+
+    submitted_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_to_strategy ON trading_orders(strategy_id);
+CREATE INDEX IF NOT EXISTS idx_to_alpaca_id ON trading_orders(alpaca_order_id);
+CREATE INDEX IF NOT EXISTS idx_to_status ON trading_orders(status);
+CREATE INDEX IF NOT EXISTS idx_to_submitted ON trading_orders(submitted_at DESC);
+
+-- Trading activity log — append-only event stream for observability.
+CREATE TABLE IF NOT EXISTS trading_activity_log (
+    id SERIAL PRIMARY KEY,
+    strategy_id VARCHAR(30) NOT NULL REFERENCES trading_strategies(id),
+    event_type VARCHAR(30) NOT NULL,  -- order_placed | order_filled | assignment | strategy_start | strategy_stop | error | signal | rebalance
+    ticker VARCHAR(10),
+    message TEXT NOT NULL,
+    details JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tal_strategy ON trading_activity_log(strategy_id);
+CREATE INDEX IF NOT EXISTS idx_tal_created ON trading_activity_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tal_event ON trading_activity_log(event_type);
+
+-- Seed the two strategy rows (idempotent)
+INSERT INTO trading_strategies (id, display_name, strategy_type, initial_capital, current_cash, config)
+VALUES
+    ('simple_stock', 'Simple Stock Trading', 'simple_stock', 500.00, 500.00, '{
+        "screener_top_n": 20,
+        "max_position_pct": 25.0,
+        "use_ai_signals": true,
+        "min_screener_score": 60.0,
+        "min_ai_confidence": 0.7,
+        "stop_loss_pct": 10.0,
+        "take_profit_pct": 20.0,
+        "max_ai_calls_per_cycle": 5,
+        "check_interval_minutes": 30
+    }'::jsonb),
+    ('wheel', 'The Wheel Strategy', 'wheel', 5000.00, 5000.00, '{
+        "symbol_list": ["F", "SOFI", "INTC", "PLTR", "BAC", "AMD"],
+        "delta_min": 0.15,
+        "delta_max": 0.30,
+        "yield_min": 0.04,
+        "yield_max": 1.00,
+        "expiration_min_days": 7,
+        "expiration_max_days": 45,
+        "open_interest_min": 100,
+        "score_min": 0.05,
+        "check_interval_minutes": 15
+    }'::jsonb)
+ON CONFLICT (id) DO NOTHING;
