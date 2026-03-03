@@ -1,0 +1,22 @@
+{
+  "version": "0.1.16",
+  "date": "2026-03-03",
+  "title": "v0.1.16",
+  "summary": "Release 0.1.16 includes 1 enhancement, 1 bug fix.",
+  "sections": [
+    {
+      "type": "bug_fix",
+      "label": "Bug Fixes",
+      "items": [
+        "Fix unused Pause import that breaks Vercel build"
+      ]
+    },
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Phase 2 plus RAG for trading"
+      ]
+    }
+  ]
+}
