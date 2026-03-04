@@ -4,6 +4,8 @@ import pathlib
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+
 from app.config import get_settings
 from app.models.database import init_db
 from app.api import companies, financials, filings, watchlist, valuation, release_notes, screener, ai, indexing, trading
@@ -33,6 +35,36 @@ _scanner_task: asyncio.Task | None = None
 _trading_task: asyncio.Task | None = None
 
 
+async def _run_migrations():
+    """Run idempotent ALTER TABLE statements to add columns that may be missing.
+
+    This bridges the gap between schema.sql (only runs on fresh DB init) and
+    existing production/dev databases that were created before new columns were added.
+    Each statement uses IF NOT EXISTS so it's safe to run on every startup.
+    """
+    from app.models import database as _db
+    if not _db.async_session_factory:
+        return
+    try:
+        async with _db.async_session_factory() as db:
+            await db.execute(text(
+                "ALTER TABLE scanner_status "
+                "ADD COLUMN IF NOT EXISTS tickers_no_data INT DEFAULT 0"
+            ))
+            await db.execute(text(
+                "ALTER TABLE scanner_status "
+                "ADD COLUMN IF NOT EXISTS tickers_timeout INT DEFAULT 0"
+            ))
+            await db.execute(text(
+                "ALTER TABLE scanner_status "
+                "ADD COLUMN IF NOT EXISTS tickers_error INT DEFAULT 0"
+            ))
+            await db.commit()
+        logger.info("Schema migrations applied successfully")
+    except Exception as e:
+        logger.warning("Schema migration failed (non-fatal): %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI lifespan: initialize DB and optionally start background tasks.
@@ -42,6 +74,10 @@ async def lifespan(app: FastAPI):
     """
     global _scanner_task, _trading_task
     init_db()
+
+    # Run idempotent schema migrations so new columns are added on deploy
+    # without requiring manual SQL. Safe to run repeatedly (IF NOT EXISTS).
+    await _run_migrations()
 
     settings = get_settings()
     if settings.scanner_enabled:
