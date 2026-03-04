@@ -3,7 +3,7 @@
 Architecture:
   - scanner_loop() is an infinite async coroutine started from FastAPI's lifespan.
   - It calls run_full_scan() which processes tickers in batches, respecting the
-    existing yfinance rate limiter (5 req/2sec) shared with user-initiated requests.
+    existing yfinance rate limiter shared with user-initiated requests.
   - Each ticker: fetch yfinance .info -> compute composite score -> upsert to DB.
   - After a full scan, ranks are recalculated via SQL window function.
   - The scanner_status table (single row) tracks progress for the frontend.
@@ -11,19 +11,25 @@ Architecture:
 Scheduling:
   - Runs once daily, targeting scanner_preferred_hour_local in scanner_timezone
     (default 17:00 America/New_York = 5 PM ET, DST-aware).
-  - On startup, runs immediately to ensure fresh data.
+  - On startup, runs immediately unless a recent scan exists (<20h old).
   - After each scan, sleeps until the next preferred hour.
   - Fundamental data doesn't change intraday, so once daily is sufficient.
 
 Rate limiting strategy:
   - Batch of 10 tickers scored concurrently (rate limiter queues excess requests).
-  - 5-second delay between batches leaves headroom for user requests on the Research page.
-  - Full scan of ~2000 unique tickers takes ~35 minutes.
+  - 3-second delay between batches leaves headroom for user requests on the Research page.
+  - Full scan of ~2000 unique tickers takes ~20-25 minutes.
 
 Error resilience:
-  - Individual ticker failures are logged and skipped — one bad ticker doesn't stop the scan.
+  - Individual ticker failures are tagged by category (no_data, timeout, error) and skipped.
+  - After the main pass, a retry pass re-attempts timeout/error tickers with relaxed settings.
   - Full scan failures are caught, logged, and retried after a delay.
   - The outer loop never crashes — it runs for the lifetime of the container.
+
+Failure categories:
+  - no_data: yfinance returned None / no price (delisted, OTC, data gap) — not retried
+  - timeout: yfinance call exceeded timeout — retried in second pass with longer timeout
+  - error: unexpected exception during scoring — retried in second pass
 """
 
 import asyncio
@@ -155,11 +161,14 @@ async def _update_ranks(db) -> None:
     await db.commit()
 
 
-async def _score_ticker(ticker: str, timeout: int) -> dict | None:
+async def _score_ticker(ticker: str, timeout: int) -> tuple[dict | None, str]:
     """Fetch yfinance data and compute score for a single ticker.
 
-    Returns the score dict on success, None on failure (timeout, missing data, etc.).
-    Failures are expected for some tickers (delisted, data gaps) and are logged but not raised.
+    Returns (score_dict, status) where status is one of:
+      'success'  — scored successfully
+      'no_data'  — yfinance returned no data (delisted, OTC, data gap) — don't retry
+      'timeout'  — yfinance call exceeded timeout — retry candidate
+      'error'    — unexpected exception — retry candidate
     """
     try:
         metrics = await asyncio.wait_for(
@@ -167,23 +176,88 @@ async def _score_ticker(ticker: str, timeout: int) -> dict | None:
             timeout=timeout,
         )
         if not metrics or not metrics.get("price"):
-            logger.debug("No data for %s, skipping", ticker)
-            return None
-        return compute_composite_score(metrics)
+            logger.info("No data for %s — no price in yfinance", ticker)
+            return None, "no_data"
+        return compute_composite_score(metrics), "success"
     except asyncio.TimeoutError:
-        logger.warning("Timeout fetching %s", ticker)
-        return None
+        logger.warning("Timeout fetching %s (>%ds)", ticker, timeout)
+        return None, "timeout"
     except Exception as e:
         logger.warning("Error scoring %s: %s", ticker, e)
-        return None
+        return None, "error"
+
+
+async def _scan_batch(
+    tickers: list[str],
+    ticker_indices: dict[str, list[str]],
+    batch_size: int,
+    batch_delay: float,
+    ticker_timeout: int,
+    counters: dict,
+    failed: dict[str, list[str]],
+    label: str = "Main pass",
+) -> None:
+    """Score a list of tickers in batches, upserting results and tracking failures.
+
+    Shared by the main scan and the retry pass. Mutates `counters` and `failed` in place.
+    """
+    for i in range(0, len(tickers), batch_size):
+        batch = tickers[i : i + batch_size]
+
+        # Score batch concurrently (asyncio.gather + rate limiter = controlled parallelism)
+        results = await asyncio.gather(
+            *[_score_ticker(t, ticker_timeout) for t in batch],
+            return_exceptions=True,
+        )
+
+        # Persist results to DB
+        async with _db.async_session_factory() as db:
+            for ticker, result in zip(batch, results):
+                # Unpack tagged result or handle gather exceptions
+                if isinstance(result, Exception):
+                    logger.warning("Exception scoring %s: %s", ticker, result)
+                    counters["error"] += 1
+                    failed.setdefault("error", []).append(ticker)
+                    continue
+
+                score_data, status = result
+
+                if status != "success":
+                    counters[status] += 1
+                    if status in ("timeout", "error"):
+                        failed.setdefault(status, []).append(ticker)
+                    continue
+
+                try:
+                    score_data["indices"] = ticker_indices.get(ticker, [])
+                    await _upsert_score(db, score_data)
+                    counters["success"] += 1
+                except Exception as e:
+                    logger.warning("DB error upserting %s: %s", ticker, e)
+                    counters["error"] += 1
+                    failed.setdefault("error", []).append(ticker)
+
+            # Update progress for the status endpoint
+            await _update_scanner_status(
+                db,
+                current_ticker=batch[-1],
+                tickers_scanned=counters["success"],
+                tickers_no_data=counters["no_data"],
+                tickers_timeout=counters["timeout"],
+                tickers_error=counters["error"],
+            )
+
+        await asyncio.sleep(batch_delay)
 
 
 async def run_full_scan() -> None:
     """Run a full scan of all tickers across all configured indices.
 
-    Processes tickers in batches, upserting each score to the DB.
-    After all tickers are processed, recalculates ranks.
-    Called by scanner_loop() on each cycle.
+    Two-pass approach:
+      1. Main pass — score all tickers with standard settings
+      2. Retry pass — re-attempt timeout/error tickers with relaxed settings
+
+    After both passes, recalculates ranks and logs a detailed failure summary.
     """
     settings = get_settings()
 
@@ -206,8 +280,8 @@ async def run_full_scan() -> None:
     batch_delay = settings.scanner_batch_delay
     ticker_timeout = settings.scanner_ticker_timeout
 
-    logger.info("Starting full scan of %d tickers (batch_size=%d, delay=%.1fs)",
-                len(tickers), batch_size, batch_delay)
+    logger.info("Starting full scan of %d tickers (batch_size=%d, delay=%.1fs, timeout=%ds)",
+                len(tickers), batch_size, batch_delay, ticker_timeout)
 
     # Mark scan as started
     async with _db.async_session_factory() as db:
@@ -216,67 +290,94 @@ async def run_full_scan() -> None:
             is_running=True,
             tickers_scanned=0,
             tickers_total=len(tickers),
+            tickers_no_data=0,
+            tickers_timeout=0,
+            tickers_error=0,
             last_full_scan_started_at=datetime.now(timezone.utc),
             last_error=None,
         )
 
-    scanned = 0
-    errors = 0
+    # Failure tracking — counters and lists of failed tickers by category
+    counters = {"success": 0, "no_data": 0, "timeout": 0, "error": 0}
+    failed: dict[str, list[str]] = {}
 
-    # Process in batches — rate limiter handles per-request throttling,
-    # batch delay provides additional breathing room for user requests.
-    for i in range(0, len(tickers), batch_size):
-        batch = tickers[i : i + batch_size]
+    # --- Main pass ---
+    await _scan_batch(
+        tickers, ticker_indices,
+        batch_size, batch_delay, ticker_timeout,
+        counters, failed, label="Main pass",
+    )
 
-        # Score batch concurrently (asyncio.gather + rate limiter = controlled parallelism)
-        results = await asyncio.gather(
-            *[_score_ticker(t, ticker_timeout) for t in batch],
-            return_exceptions=True,
+    logger.info(
+        "Main pass complete: %d success, %d no_data, %d timeout, %d error out of %d",
+        counters["success"], counters["no_data"], counters["timeout"], counters["error"],
+        len(tickers),
+    )
+
+    # --- Retry pass for timeout/error tickers ---
+    retry_tickers = failed.get("timeout", []) + failed.get("error", [])
+    recovered = 0
+
+    if retry_tickers and settings.scanner_retry_failed:
+        logger.info("Retry pass: %d tickers to retry (waiting 30s for cooldown)...", len(retry_tickers))
+        await asyncio.sleep(30)
+
+        # Relaxed settings: longer timeout, smaller batches, more delay
+        retry_counters = {"success": 0, "no_data": 0, "timeout": 0, "error": 0}
+        retry_failed: dict[str, list[str]] = {}
+
+        await _scan_batch(
+            retry_tickers, ticker_indices,
+            batch_size=5, batch_delay=5.0, ticker_timeout=20,
+            counters=retry_counters, failed=retry_failed, label="Retry pass",
         )
 
-        # Persist results to DB
-        async with _db.async_session_factory() as db:
-            for ticker, result in zip(batch, results):
-                if isinstance(result, Exception):
-                    logger.warning("Exception scoring %s: %s", ticker, result)
-                    errors += 1
-                    continue
-                if result is None:
-                    errors += 1
-                    continue
+        recovered = retry_counters["success"]
+        counters["success"] += retry_counters["success"]
+        # Reduce the original failure counts by recovered amount
+        counters["timeout"] = counters["timeout"] - recovered + retry_counters["timeout"]
+        counters["error"] = counters["error"] - recovered + retry_counters["error"]
+        counters["no_data"] += retry_counters["no_data"]
 
-                try:
-                    # Inject index memberships before upserting
-                    result["indices"] = ticker_indices.get(ticker, [])
-                    await _upsert_score(db, result)
-                    scanned += 1
-                except Exception as e:
-                    logger.warning("DB error upserting %s: %s", ticker, e)
-                    errors += 1
+        logger.info("Retry pass: recovered %d of %d failed tickers", recovered, len(retry_tickers))
 
-            # Update progress for the status endpoint
-            await _update_scanner_status(
-                db,
-                current_ticker=batch[-1],
-                tickers_scanned=scanned,
-            )
-
-        # Pause between batches to leave rate limit headroom
-        await asyncio.sleep(batch_delay)
+    # Log top timeout tickers for diagnosis (helps identify stale CSV entries)
+    remaining_timeouts = failed.get("timeout", [])
+    if len(remaining_timeouts) > 0:
+        sample = remaining_timeouts[:20]
+        logger.warning("Top timeout tickers (%d total): %s", len(remaining_timeouts), ", ".join(sample))
 
     # Recalculate ranks now that all scores are updated
     async with _db.async_session_factory() as db:
         await _update_ranks(db)
+
+        # Store failure summary for API visibility
+        failure_summary = json.dumps({
+            "success": counters["success"],
+            "no_data": counters["no_data"],
+            "timeout": counters["timeout"],
+            "error": counters["error"],
+            "retry_recovered": recovered,
+        })
+
         await _update_scanner_status(
             db,
             is_running=False,
             current_ticker=None,
-            tickers_scanned=scanned,
+            tickers_scanned=counters["success"],
+            tickers_no_data=counters["no_data"],
+            tickers_timeout=counters["timeout"],
+            tickers_error=counters["error"],
             last_full_scan_completed_at=datetime.now(timezone.utc),
+            last_error=failure_summary,
         )
 
-    logger.info("Full scan complete: %d scored, %d errors out of %d tickers",
-                scanned, errors, len(tickers))
+    logger.info(
+        "Full scan complete: %d scored, %d no_data, %d timeout, %d error "
+        "(%d recovered via retry) out of %d tickers",
+        counters["success"], counters["no_data"], counters["timeout"], counters["error"],
+        recovered, len(tickers),
+    )
 
 
 def _seconds_until_preferred_hour(preferred_hour: int, tz_name: str) -> float:

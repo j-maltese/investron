@@ -368,8 +368,12 @@ async def get_activity_log(
         params["date_from"] = date_from
 
     if date_to:
-        # Include the full end date (through end of day)
-        where_parts.append("created_at < (:date_to::date + interval '1 day')")
+        # ISO datetime strings (contain 'T') use exact comparison;
+        # plain date strings get end-of-day inclusion for backward compat.
+        if 'T' in date_to:
+            where_parts.append("created_at <= :date_to::timestamptz")
+        else:
+            where_parts.append("created_at < (:date_to::date + interval '1 day')")
         params["date_to"] = date_to
 
     where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""

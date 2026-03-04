@@ -152,14 +152,22 @@ CREATE TABLE IF NOT EXISTS scanner_status (
     current_ticker VARCHAR(10),
     tickers_scanned INT DEFAULT 0,
     tickers_total INT DEFAULT 0,
+    tickers_no_data INT DEFAULT 0,            -- Tickers with no yfinance data (delisted, OTC)
+    tickers_timeout INT DEFAULT 0,            -- Tickers that timed out
+    tickers_error INT DEFAULT 0,              -- Tickers with unexpected errors
     last_full_scan_started_at TIMESTAMPTZ,
     last_full_scan_completed_at TIMESTAMPTZ,
-    last_error TEXT,
+    last_error TEXT,                           -- JSON failure summary after scan completion
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Seed the single status row (idempotent)
 INSERT INTO scanner_status (id) VALUES (1) ON CONFLICT DO NOTHING;
+
+-- Add failure counter columns to existing deployments (idempotent)
+ALTER TABLE scanner_status ADD COLUMN IF NOT EXISTS tickers_no_data INT DEFAULT 0;
+ALTER TABLE scanner_status ADD COLUMN IF NOT EXISTS tickers_timeout INT DEFAULT 0;
+ALTER TABLE scanner_status ADD COLUMN IF NOT EXISTS tickers_error INT DEFAULT 0;
 
 -- pgvector extension for SEC filing RAG (on-demand vectorization)
 CREATE EXTENSION IF NOT EXISTS vector;

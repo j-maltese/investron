@@ -56,11 +56,12 @@ class Settings(BaseSettings):
     # All configurable via env vars (e.g. SCANNER_ENABLED=false for local dev)
     scanner_enabled: bool = True          # Set False to disable background scanning
     scanner_batch_size: int = 10          # Tickers fetched per batch
-    scanner_batch_delay: float = 5.0      # Seconds between batches (respects rate limiter)
+    scanner_batch_delay: float = 3.0      # Seconds between batches (rate limiter handles throttling)
     scanner_interval_seconds: int = 86400  # Seconds between full scans (24 hours)
     scanner_preferred_hour_local: int = 17  # 5 PM in scanner_timezone
     scanner_timezone: str = "America/New_York"  # Handles EST ↔ EDT automatically
-    scanner_ticker_timeout: int = 15      # Per-ticker yfinance fetch timeout
+    scanner_ticker_timeout: int = 10      # Per-ticker yfinance fetch timeout (responses >10s are hangs)
+    scanner_retry_failed: bool = True     # Enable second pass for timeout/error tickers
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

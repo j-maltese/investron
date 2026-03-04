@@ -14,13 +14,14 @@ import pathlib
 logger = logging.getLogger(__name__)
 
 # ---- Index registry ----
-# Maps display name → CSV filename. Order determines dropdown order in the UI.
-INDEX_REGISTRY: dict[str, str] = {
-    "S&P 500": "sp500.csv",
-    "NASDAQ-100": "nasdaq100.csv",
-    "Dow 30": "dow30.csv",
-    "S&P MidCap 400": "sp400.csv",
-    "Russell 2000": "russell2000.csv",
+# Maps display name → (CSV filename, expected approximate count).
+# Expected counts are used for staleness warnings — not hard requirements.
+INDEX_REGISTRY: dict[str, tuple[str, int]] = {
+    "S&P 500": ("sp500.csv", 500),
+    "NASDAQ-100": ("nasdaq100.csv", 100),
+    "Dow 30": ("dow30.csv", 30),
+    "S&P MidCap 400": ("sp400.csv", 400),
+    "Russell 2000": ("russell2000.csv", 2000),
 }
 
 # Module-level cache: loaded once, reused for the lifetime of the process
@@ -62,7 +63,7 @@ def load_universe() -> list[dict]:
     merged: dict[str, dict] = {}
     total_loaded = 0
 
-    for index_name, csv_filename in INDEX_REGISTRY.items():
+    for index_name, (csv_filename, expected_count) in INDEX_REGISTRY.items():
         csv_path = data_dir / csv_filename
         if not csv_path.exists():
             logger.warning("Index CSV not found: %s (skipping %s)", csv_path, index_name)
@@ -72,7 +73,8 @@ def load_universe() -> list[dict]:
         with open(csv_path, newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                ticker = row.get("ticker", "").strip()
+                # Strip whitespace to prevent phantom failures (" AAPL" vs "AAPL")
+                ticker = row.get("ticker", "").strip().upper()
                 if not ticker:
                     continue
 
@@ -89,6 +91,13 @@ def load_universe() -> list[dict]:
                 count += 1
         total_loaded += count
         logger.info("Loaded %d tickers from %s (%s)", count, csv_filename, index_name)
+
+        # Warn if CSV has significantly fewer rows than expected — may need updating
+        if expected_count and count < expected_count * 0.95:
+            logger.warning(
+                "%s has %d rows (expected ~%d) — CSV may need updating",
+                csv_filename, count, expected_count,
+            )
 
     # Convert sets to sorted lists for JSON serialization
     _UNIVERSE = [
