@@ -58,7 +58,8 @@ class Settings(BaseSettings):
     scanner_batch_size: int = 10          # Tickers fetched per batch
     scanner_batch_delay: float = 5.0      # Seconds between batches (respects rate limiter)
     scanner_interval_seconds: int = 86400  # Seconds between full scans (24 hours)
-    scanner_preferred_hour_utc: int = 21  # Preferred scan start hour in UTC (21 = 5 PM ET / 4 PM EDT)
+    scanner_preferred_hour_local: int = 17  # 5 PM in scanner_timezone
+    scanner_timezone: str = "America/New_York"  # Handles EST ↔ EDT automatically
     scanner_ticker_timeout: int = 15      # Per-ticker yfinance fetch timeout
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}

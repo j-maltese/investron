@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { api } from '@/lib/api'
 import { ScenarioModeler } from './ScenarioModeler'
+import { DataError } from '@/components/ui/DataError'
 import type { DCFResult } from '@/lib/types'
 
 interface ValuationTabProps {
@@ -13,10 +14,12 @@ export function ValuationTab({ ticker }: ValuationTabProps) {
   const [terminalGrowth, setTerminalGrowth] = useState('3')
   const [years, setYears] = useState('10')
   const [dcfResult, setDcfResult] = useState<DCFResult | null>(null)
+  const [dcfError, setDcfError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
   const handleRunDCF = async () => {
     setLoading(true)
+    setDcfError(null)
     try {
       const result = await api.runDCF(ticker, {
         growth_rate: parseFloat(growthRate) / 100,
@@ -26,7 +29,7 @@ export function ValuationTab({ ticker }: ValuationTabProps) {
       })
       setDcfResult(result)
     } catch (err) {
-      console.error('DCF calculation failed:', err)
+      setDcfError(err instanceof Error ? err.message : 'DCF calculation failed')
     } finally {
       setLoading(false)
     }
@@ -60,6 +63,8 @@ export function ValuationTab({ ticker }: ValuationTabProps) {
         <button onClick={handleRunDCF} className="btn-primary text-sm" disabled={loading}>
           {loading ? 'Calculating...' : 'Calculate DCF'}
         </button>
+
+        {dcfError && <DataError compact message={dcfError} onRetry={handleRunDCF} />}
 
         {dcfResult && (
           <div className="mt-4 space-y-3">

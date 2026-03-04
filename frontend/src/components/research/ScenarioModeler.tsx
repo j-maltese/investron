@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { api } from '@/lib/api'
+import { DataError } from '@/components/ui/DataError'
 import type { ScenarioResult } from '@/lib/types'
 
 interface ScenarioModelerProps {
@@ -24,6 +25,7 @@ const DEFAULT_SCENARIOS: ScenarioForm[] = [
 export function ScenarioModeler({ ticker }: ScenarioModelerProps) {
   const [scenarios, setScenarios] = useState<ScenarioForm[]>(DEFAULT_SCENARIOS)
   const [result, setResult] = useState<ScenarioResult | null>(null)
+  const [scenarioError, setScenarioError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
   const updateScenario = (index: number, field: keyof ScenarioForm, value: string) => {
@@ -34,6 +36,7 @@ export function ScenarioModeler({ ticker }: ScenarioModelerProps) {
 
   const handleRun = async () => {
     setLoading(true)
+    setScenarioError(null)
     try {
       const data = await api.runScenario(ticker, {
         scenarios: scenarios.map((s) => ({
@@ -47,7 +50,7 @@ export function ScenarioModeler({ ticker }: ScenarioModelerProps) {
       })
       setResult(data)
     } catch (err) {
-      console.error('Scenario analysis failed:', err)
+      setScenarioError(err instanceof Error ? err.message : 'Scenario analysis failed')
     } finally {
       setLoading(false)
     }
@@ -88,6 +91,8 @@ export function ScenarioModeler({ ticker }: ScenarioModelerProps) {
       <button onClick={handleRun} className="btn-primary text-sm" disabled={loading}>
         {loading ? 'Running...' : 'Run Analysis'}
       </button>
+
+      {scenarioError && <DataError compact message={scenarioError} onRetry={handleRun} />}
 
       {/* Results */}
       {result && (

@@ -23,6 +23,7 @@ import {
 } from 'lucide-react'
 import { useActivityLog } from '@/hooks/useTrading'
 import type { TradingActivityEvent } from '@/lib/types'
+import { formatDateTime } from '@/lib/dateUtils'
 
 // ---------------------------------------------------------------------------
 // Event type → icon + color mapping
@@ -363,7 +364,7 @@ export function ActivityFeed({
                   <div className="text-sm">{event.message}</div>
                   <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                     <span className="text-xs text-[var(--muted-foreground)]">
-                      {new Date(event.created_at).toLocaleString()}
+                      {formatDateTime(event.created_at)}
                     </span>
                     {event.ticker && (
                       <span className="text-xs font-mono text-[var(--accent)]">

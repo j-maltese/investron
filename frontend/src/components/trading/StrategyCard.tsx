@@ -1,5 +1,6 @@
 import { Play, Square, Pause, RotateCcw, AlertTriangle } from 'lucide-react'
 import type { TradingStrategy } from '@/lib/types'
+import { formatTime } from '@/lib/dateUtils'
 import { useStartStrategy, useStopStrategy, usePauseStrategy, useResetStrategy } from '@/hooks/useTrading'
 
 const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
@@ -151,7 +152,7 @@ export function StrategyCard({ strategy }: StrategyCardProps) {
         {/* Last run timestamp */}
         {strategy.last_run_at && (
           <span className="ml-auto text-xs text-[var(--muted-foreground)]">
-            Last run: {new Date(strategy.last_run_at).toLocaleTimeString()}
+            Last run: {formatTime(strategy.last_run_at)}
           </span>
         )}
       </div>

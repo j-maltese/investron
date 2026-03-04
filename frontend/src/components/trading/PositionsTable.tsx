@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import type { TradingPosition } from '@/lib/types'
+import { formatDate } from '@/lib/dateUtils'
 
 function formatMoney(value?: number | null): string {
   if (value == null) return '-'
@@ -102,7 +103,7 @@ export function PositionsTable({ positions, totalCount }: PositionsTableProps) {
                     </span>
                   </td>
                   <td className="px-4 py-2.5 text-xs text-[var(--muted-foreground)]">
-                    {new Date(pos.opened_at).toLocaleDateString()}
+                    {formatDate(pos.opened_at)}
                   </td>
                 </tr>
               )

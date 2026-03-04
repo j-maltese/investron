@@ -1,5 +1,6 @@
 import { CheckCircle2, XCircle } from 'lucide-react'
 import { useGrahamScore } from '@/hooks/useCompany'
+import { DataError } from '@/components/ui/DataError'
 import type { GrahamCriterion } from '@/lib/types'
 
 interface GrahamScoreProps {
@@ -7,9 +8,10 @@ interface GrahamScoreProps {
 }
 
 export function GrahamScore({ ticker }: GrahamScoreProps) {
-  const { data, isLoading } = useGrahamScore(ticker)
+  const { data, isLoading, isError, error, refetch } = useGrahamScore(ticker)
 
   if (isLoading) return <div className="text-[var(--muted-foreground)]">Loading Graham analysis...</div>
+  if (isError) return <DataError message={error?.message || 'Failed to load Graham score'} onRetry={() => refetch()} />
   if (!data) return null
 
   const scoreColor = data.score >= 5 ? 'text-gain' : data.score >= 3 ? 'text-yellow-500' : 'text-loss'
