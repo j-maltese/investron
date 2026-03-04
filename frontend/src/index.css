@@ -99,6 +99,94 @@
   background: var(--muted-foreground);
 }
 
+/* ----------------------------------------------------------------
+ * react-datepicker dark theme overrides
+ * Scoped to .investron-datepicker via calendarClassName prop.
+ * Uses the app's CSS variables for consistent dark theming.
+ * ---------------------------------------------------------------- */
+
+/* Popper z-index — above the scrollable event list in ActivityFeed */
+.react-datepicker-popper {
+  z-index: 50 !important;
+}
+
+/* Calendar container */
+.investron-datepicker {
+  background-color: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 0.5rem !important;
+  font-size: 0.75rem !important;
+}
+
+/* Header (month/year navigation) */
+.investron-datepicker .react-datepicker__header {
+  background-color: var(--muted) !important;
+  border-bottom: 1px solid var(--border) !important;
+}
+
+.investron-datepicker .react-datepicker__current-month,
+.investron-datepicker .react-datepicker__day-name {
+  color: var(--foreground) !important;
+}
+
+/* Navigation arrows */
+.investron-datepicker .react-datepicker__navigation-icon::before {
+  border-color: var(--muted-foreground) !important;
+}
+
+/* Day cells */
+.investron-datepicker .react-datepicker__day {
+  color: var(--foreground) !important;
+}
+.investron-datepicker .react-datepicker__day:hover {
+  background-color: var(--muted) !important;
+  border-radius: 0.25rem;
+}
+.investron-datepicker .react-datepicker__day--selected,
+.investron-datepicker .react-datepicker__day--keyboard-selected {
+  background-color: var(--accent) !important;
+  color: #fff !important;
+  border-radius: 0.25rem;
+}
+.investron-datepicker .react-datepicker__day--outside-month {
+  color: var(--muted-foreground) !important;
+  opacity: 0.5;
+}
+.investron-datepicker .react-datepicker__day--disabled {
+  color: var(--muted-foreground) !important;
+  opacity: 0.3;
+}
+
+/* Time list sidebar */
+.investron-datepicker .react-datepicker__time-container {
+  border-left: 1px solid var(--border) !important;
+}
+.investron-datepicker .react-datepicker__time-container .react-datepicker__time {
+  background-color: var(--card) !important;
+}
+.investron-datepicker .react-datepicker__time-list-item {
+  color: var(--foreground) !important;
+}
+.investron-datepicker .react-datepicker__time-list-item:hover {
+  background-color: var(--muted) !important;
+}
+.investron-datepicker .react-datepicker__time-list-item--selected {
+  background-color: var(--accent) !important;
+  color: #fff !important;
+}
+
+/* Hide the triangle arrow — cleaner look in dark UI */
+.react-datepicker__triangle,
+.investron-datepicker .react-datepicker__triangle {
+  display: none !important;
+}
+
+/* Input clear button (X) */
+.react-datepicker__close-icon::after {
+  background-color: var(--muted-foreground) !important;
+  font-size: 10px !important;
+}
+
 /* Progress message slide-in for filing indexing banner */
 @keyframes fadeSlideIn {
   from {

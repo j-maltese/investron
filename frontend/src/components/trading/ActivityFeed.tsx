@@ -21,6 +21,8 @@ import {
   XCircle, Timer, Clock, Ban, ArrowRightCircle, ChevronDown, ChevronRight,
   Loader2,
 } from 'lucide-react'
+import DatePicker from 'react-datepicker'
+import 'react-datepicker/dist/react-datepicker.css'
 import { useActivityLog } from '@/hooks/useTrading'
 import type { TradingActivityEvent } from '@/lib/types'
 import { formatDateTime } from '@/lib/dateUtils'
@@ -114,26 +116,30 @@ function matchesFilter(eventType: string, filter: FilterCategory): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Date range helpers for quick presets
+// Date range helpers for quick presets + API conversion
 // ---------------------------------------------------------------------------
 
-function toISODate(d: Date): string {
-  return d.toISOString().slice(0, 10)
+/** Convert a Date to an ISO-8601 string for the API, or undefined if null. */
+function toAPIDatetime(d: Date | null): string | undefined {
+  return d ? d.toISOString() : undefined
 }
 
-function getPresetDate(preset: 'today' | 'week' | 'month'): string {
+function getPresetDate(preset: 'today' | 'week' | 'month'): Date {
   const now = new Date()
-  if (preset === 'today') return toISODate(now)
+  if (preset === 'today') {
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0)
+  }
   if (preset === 'week') {
     // Start of this week (Monday). Sunday=0, Monday=1, ..., Saturday=6.
     const day = now.getDay()
     const diff = day === 0 ? 6 : day - 1
     const monday = new Date(now)
     monday.setDate(now.getDate() - diff)
-    return toISODate(monday)
+    monday.setHours(0, 0, 0, 0)
+    return monday
   }
-  // "month" preset: first day of current month
-  return toISODate(new Date(now.getFullYear(), now.getMonth(), 1))
+  // "month" preset: first day of current month at midnight
+  return new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -215,8 +221,8 @@ export function ActivityFeed({
 }: ActivityFeedProps) {
   // -- Full-mode state (filter pills, date range, pagination, expanded rows) --
   const [filter, setFilter] = useState<FilterCategory>('all')
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo, setDateTo] = useState('')
+  const [dateFrom, setDateFrom] = useState<Date | null>(null)
+  const [dateTo, setDateTo] = useState<Date | null>(null)
   const [loadedCount, setLoadedCount] = useState(50)
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
 
@@ -227,8 +233,8 @@ export function ActivityFeed({
       ? { enabled: false }
       : {
           strategyId,
-          dateFrom: dateFrom || undefined,
-          dateTo: dateTo || undefined,
+          dateFrom: toAPIDatetime(dateFrom),
+          dateTo: toAPIDatetime(dateTo),
           limit: loadedCount,
         }
   )
@@ -259,13 +265,13 @@ export function ActivityFeed({
   }, [])
 
   const clearDateRange = useCallback(() => {
-    setDateFrom('')
-    setDateTo('')
+    setDateFrom(null)
+    setDateTo(null)
   }, [])
 
   const applyPreset = useCallback((preset: 'today' | 'week' | 'month') => {
     setDateFrom(getPresetDate(preset))
-    setDateTo('') // No end date = up to now
+    setDateTo(null) // No end date = up to now
   }, [])
 
   // -- Loading state (full mode only) --
@@ -297,8 +303,8 @@ export function ActivityFeed({
           {filter !== 'all'
             ? ` matching "${FILTER_PILLS.find((p) => p.key === filter)?.label}"`
             : ''}
-          {dateFrom ? ` from ${dateFrom}` : ''}
-          {dateTo ? ` to ${dateTo}` : ''}
+          {dateFrom ? ` from ${dateFrom.toLocaleString()}` : ''}
+          {dateTo ? ` to ${dateTo.toLocaleString()}` : ''}
           .
         </div>
       </div>
@@ -454,10 +460,10 @@ function DateRangeBar({
   clearDateRange,
   applyPreset,
 }: {
-  dateFrom: string
-  dateTo: string
-  setDateFrom: (v: string) => void
-  setDateTo: (v: string) => void
+  dateFrom: Date | null
+  dateTo: Date | null
+  setDateFrom: (v: Date | null) => void
+  setDateTo: (v: Date | null) => void
   clearDateRange: () => void
   applyPreset: (p: 'today' | 'week' | 'month') => void
 }) {
@@ -465,20 +471,34 @@ function DateRangeBar({
     <div className="flex items-center gap-3 flex-wrap text-xs">
       <label className="flex items-center gap-1.5 text-[var(--muted-foreground)]">
         From
-        <input
-          type="date"
-          value={dateFrom}
-          onChange={(e) => setDateFrom(e.target.value)}
-          className="bg-[var(--muted)] border border-[var(--border)] rounded px-2 py-1 text-[var(--foreground)] text-xs"
+        <DatePicker
+          selected={dateFrom}
+          onChange={(date) => setDateFrom(date)}
+          showTimeSelect
+          timeIntervals={15}
+          dateFormat="MMM d, yyyy h:mm aa"
+          placeholderText="Select start..."
+          maxDate={dateTo || undefined}
+          isClearable
+          className="bg-[var(--muted)] border border-[var(--border)] rounded px-2 py-1 text-[var(--foreground)] text-xs w-[170px]"
+          calendarClassName="investron-datepicker"
+          popperPlacement="bottom-start"
         />
       </label>
       <label className="flex items-center gap-1.5 text-[var(--muted-foreground)]">
         To
-        <input
-          type="date"
-          value={dateTo}
-          onChange={(e) => setDateTo(e.target.value)}
-          className="bg-[var(--muted)] border border-[var(--border)] rounded px-2 py-1 text-[var(--foreground)] text-xs"
+        <DatePicker
+          selected={dateTo}
+          onChange={(date) => setDateTo(date)}
+          showTimeSelect
+          timeIntervals={15}
+          dateFormat="MMM d, yyyy h:mm aa"
+          placeholderText="Select end..."
+          minDate={dateFrom || undefined}
+          isClearable
+          className="bg-[var(--muted)] border border-[var(--border)] rounded px-2 py-1 text-[var(--foreground)] text-xs w-[170px]"
+          calendarClassName="investron-datepicker"
+          popperPlacement="bottom-start"
         />
       </label>
       {/* Quick preset links */}
