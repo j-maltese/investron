@@ -11,7 +11,7 @@
  * so the "Scanning..." progress indicator stays responsive.
  */
 
-import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 
 /** Parameters for filtering/sorting screener results */
@@ -77,5 +77,19 @@ export function useScreenerIndices() {
     queryKey: ['screener-indices'],
     queryFn: () => api.getScreenerIndices(),
     staleTime: 10 * 60_000,    // 10 min — indices don't change often
+  })
+}
+
+/**
+ * Manually trigger a full scan. Invalidates scanner status on success
+ * so the progress indicator picks up the running state immediately.
+ */
+export function useTriggerScan() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.triggerScan(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['scanner-status'] })
+    },
   })
 }

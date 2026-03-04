@@ -133,6 +133,9 @@ export const api = {
   getScreenerIndices: () =>
     apiFetch<{ indices: string[] }>('/api/screener/indices'),
 
+  triggerScan: () =>
+    apiFetch<{ message: string }>('/api/screener/trigger', { method: 'POST' }),
+
   // Filing Indexing
   getFilingIndexStatus: (ticker: string) =>
     apiFetch<FilingIndexStatus>(`/api/ai/filings/${ticker}/status`),

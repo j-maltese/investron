@@ -5,19 +5,23 @@ public market data and contains no user-specific information. This also means th
 scanner can populate data without any user being logged in.
 
 Endpoints:
-  GET /results  — Paginated, sortable, filterable ranked stock list
-  GET /status   — Scanner progress and last-updated timestamp
-  GET /sectors  — Distinct sectors for the filter dropdown
-  GET /indices  — Distinct indices for the filter dropdown
+  GET  /results  — Paginated, sortable, filterable ranked stock list
+  GET  /status   — Scanner progress and last-updated timestamp
+  GET  /sectors  — Distinct sectors for the filter dropdown
+  GET  /indices  — Distinct indices for the filter dropdown
+  POST /trigger  — Manually start a full scan (if not already running)
 """
 
+import asyncio
 import json
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.database import get_db
+from app.services.scanner import run_full_scan
 
 router = APIRouter()
 
@@ -173,3 +177,22 @@ async def get_indices(db: AsyncSession = Depends(get_db)):
     )
     indices = [row["idx"] for row in result.mappings().all()]
     return {"indices": indices}
+
+
+@router.post("/trigger")
+async def trigger_scan(db: AsyncSession = Depends(get_db)):
+    """Manually start a full scan — used to re-run the screener on demand.
+
+    Returns 409 if a scan is already in progress (prevents stacking scans).
+    The scan runs as a background task; poll GET /status for progress.
+    """
+    result = await db.execute(
+        text("SELECT is_running FROM scanner_status WHERE id = 1")
+    )
+    row = result.mappings().first()
+    if row and row["is_running"]:
+        return JSONResponse(status_code=409, content={"message": "Scan already running"})
+
+    # Fire-and-forget: launch scan as a background asyncio task
+    asyncio.create_task(run_full_scan())
+    return {"message": "Scan started"}

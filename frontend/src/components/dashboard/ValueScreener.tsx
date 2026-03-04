@@ -19,9 +19,9 @@ import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import {
   TrendingDown, Clock, Plus, ExternalLink,
-  ArrowUp, ArrowDown, ArrowUpDown, Loader2,
+  ArrowUp, ArrowDown, ArrowUpDown, Loader2, RefreshCw,
 } from 'lucide-react'
-import { useScreenerResults, useScannerStatus, useScreenerSectors, useScreenerIndices } from '@/hooks/useScreener'
+import { useScreenerResults, useScannerStatus, useScreenerSectors, useScreenerIndices, useTriggerScan } from '@/hooks/useScreener'
 import { useAddToWatchlist } from '@/hooks/useWatchlist'
 import type { ScreenerScore, ScreenerWarning } from '@/lib/types'
 import { formatDateTime } from '@/lib/dateUtils'
@@ -313,6 +313,7 @@ export function ValueScreener() {
   const { data: sectorsData } = useScreenerSectors()
   const { data: indicesData } = useScreenerIndices()
   const addMutation = useAddToWatchlist()
+  const triggerScan = useTriggerScan()
 
   // Infinite scroll: observe the sentinel row at the bottom of the table.
   // When it enters the scroll container viewport, load 25 more rows.
@@ -370,10 +371,18 @@ export function ValueScreener() {
                 Scanning... ({status.tickers_scanned}/{status.tickers_total})
               </span>
             ) : status?.last_full_scan_completed_at ? (
-              // Show last-updated timestamp when idle
+              // Show last-updated timestamp when idle, with manual re-scan button
               <span className="flex items-center gap-1">
                 <Clock className="w-3 h-3" />
                 Updated {formatDateTime(status.last_full_scan_completed_at)}
+                <button
+                  onClick={() => triggerScan.mutate()}
+                  disabled={triggerScan.isPending}
+                  className="ml-1 p-0.5 rounded hover:bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-teal-400 transition-colors"
+                  title="Re-run scanner"
+                >
+                  <RefreshCw className={`w-3 h-3 ${triggerScan.isPending ? 'animate-spin' : ''}`} />
+                </button>
               </span>
             ) : null}
             {/* Hide stale count while a scan is in progress — the progress
