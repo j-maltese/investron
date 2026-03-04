@@ -76,23 +76,34 @@ async def get_financial_statements(
 
 
 async def get_key_metrics(db: AsyncSession, ticker: str) -> dict:
-    """Get key financial metrics from yfinance (real-time) with caching."""
+    """Get key financial metrics from yfinance (real-time) with caching.
+
+    Returns a dict with metric fields on success, or {"ticker", "error", "error_message"}
+    on failure. Failed results are negatively cached for 2 minutes to avoid hammering
+    a ticker that's timing out, while still allowing recovery on the next attempt.
+    """
     settings = get_settings()
     company = await get_or_create_company(db, ticker)
     if not company:
-        return {"ticker": ticker}
+        return {"ticker": ticker, "error": True, "error_message": "Company not found"}
 
-    # Check cache (shorter TTL for price-sensitive data)
+    # Check cache (includes negative cache entries — error results expire in 2 min)
     cached = await get_cached_data(db, company["id"], "yfinance", "key_metrics", "current")
     if cached:
         return cached
 
-    # Fetch from yfinance
+    # Fetch from yfinance (retries handled inside yfinance_svc)
     info = await yfinance_svc.get_stock_info(ticker)
     if not info:
-        return {"ticker": ticker}
+        # Cache the failure briefly so rapid refreshes don't hammer a failing ticker
+        error_result = {"ticker": ticker, "error": True, "error_message": "Unable to fetch market data"}
+        await set_cached_data(
+            db, company["id"], "yfinance", "key_metrics", "current",
+            error_result, 120,  # 2-minute negative cache
+        )
+        return error_result
 
-    # Cache with price TTL
+    # Cache with price TTL (15 min)
     await set_cached_data(
         db, company["id"], "yfinance", "key_metrics", "current",
         info, settings.cache_ttl_prices,
@@ -102,17 +113,21 @@ async def get_key_metrics(db: AsyncSession, ticker: str) -> dict:
 
 
 async def get_growth_metrics(db: AsyncSession, ticker: str) -> dict:
-    """Calculate growth/emerging company metrics from EDGAR + yfinance data."""
+    """Calculate growth/emerging company metrics from EDGAR + yfinance data.
+
+    Returns a dict with growth fields on success, or {"ticker", "error", "error_message"}
+    when SEC filings data is unavailable for this ticker.
+    """
     company = await get_or_create_company(db, ticker)
     if not company:
-        return {"ticker": ticker}
+        return {"ticker": ticker, "error": True, "error_message": "Company not found"}
 
     cik = company.get("cik", "").zfill(10)
 
     # Get XBRL data for time series analysis
     facts = await edgar.get_xbrl_company_facts(cik)
     if not facts:
-        return {"ticker": ticker}
+        return {"ticker": ticker, "error": True, "error_message": "Unable to fetch SEC filings data"}
 
     # Revenue growth rates
     revenue_series = edgar.extract_financial_time_series(

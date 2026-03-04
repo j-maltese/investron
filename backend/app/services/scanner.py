@@ -9,8 +9,9 @@ Architecture:
   - The scanner_status table (single row) tracks progress for the frontend.
 
 Scheduling:
-  - Runs once daily, targeting scanner_preferred_hour_utc (default 21 = 5 PM ET).
-  - On startup, runs immediately if preferred hour has already passed today (catch-up).
+  - Runs once daily, targeting scanner_preferred_hour_local in scanner_timezone
+    (default 17:00 America/New_York = 5 PM ET, DST-aware).
+  - On startup, runs immediately to ensure fresh data.
   - After each scan, sleeps until the next preferred hour.
   - Fundamental data doesn't change intraday, so once daily is sufficient.
 
@@ -29,6 +30,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 
@@ -277,20 +279,27 @@ async def run_full_scan() -> None:
                 scanned, errors, len(tickers))
 
 
-def _seconds_until_preferred_hour(preferred_hour: int) -> float:
-    """Calculate seconds until the next occurrence of preferred_hour UTC.
+def _seconds_until_preferred_hour(preferred_hour: int, tz_name: str) -> float:
+    """Calculate seconds until the next occurrence of preferred_hour in the given timezone.
 
-    If the preferred hour hasn't passed yet today, returns time until today's occurrence.
-    If it has already passed, returns time until tomorrow's occurrence.
+    Handles DST transitions automatically via ZoneInfo. For example, 5 PM Eastern
+    maps to UTC 22:00 during EDT and UTC 21:00 during EST — this function accounts
+    for whichever is current.
     """
-    now = datetime.now(timezone.utc)
-    target_today = now.replace(hour=preferred_hour, minute=0, second=0, microsecond=0)
+    tz = ZoneInfo(tz_name)
+    now_utc = datetime.now(timezone.utc)
+    now_local = now_utc.astimezone(tz)
 
-    if now < target_today:
-        return (target_today - now).total_seconds()
-    # Already past today's target — schedule for tomorrow
-    target_tomorrow = target_today + timedelta(days=1)
-    return (target_tomorrow - now).total_seconds()
+    # Build today's target in the local timezone
+    target_local = now_local.replace(hour=preferred_hour, minute=0, second=0, microsecond=0)
+
+    if now_local >= target_local:
+        # Already past today's target — schedule for tomorrow
+        target_local += timedelta(days=1)
+
+    # Convert back to UTC for the delta
+    target_utc = target_local.astimezone(timezone.utc)
+    return (target_utc - now_utc).total_seconds()
 
 
 async def scanner_loop() -> None:
@@ -300,15 +309,16 @@ async def scanner_loop() -> None:
     Runs independently of HTTP requests — no user login needed.
     The loop never exits on its own; it's cancelled when the app shuts down.
 
-    Scheduling: targets scanner_preferred_hour_utc (default 21 = 5 PM ET).
-    On first startup, runs immediately to ensure data is fresh, then sleeps
-    until the next preferred hour.
+    Scheduling: targets scanner_preferred_hour_local in scanner_timezone
+    (default 17:00 America/New_York = 5 PM ET). On first startup, runs
+    immediately to ensure data is fresh, then sleeps until the next preferred hour.
     """
     settings = get_settings()
-    preferred_hour = settings.scanner_preferred_hour_utc
+    preferred_hour = settings.scanner_preferred_hour_local
+    tz_name = settings.scanner_timezone
     logger.info(
-        "Background scanner starting (daily at %02d:00 UTC)...",
-        preferred_hour,
+        "Background scanner starting (daily at %02d:00 %s)...",
+        preferred_hour, tz_name,
     )
 
     # Brief delay: let the app finish starting and DB connections warm up
@@ -320,11 +330,11 @@ async def scanner_loop() -> None:
     while True:
         if not first_run:
             # Sleep until the next preferred hour
-            sleep_secs = _seconds_until_preferred_hour(preferred_hour)
+            sleep_secs = _seconds_until_preferred_hour(preferred_hour, tz_name)
             hours_until = sleep_secs / 3600
             logger.info(
-                "Next scan in %.1f hours (at %02d:00 UTC)",
-                hours_until, preferred_hour,
+                "Next scan in %.1f hours (at %02d:00 %s)",
+                hours_until, preferred_hour, tz_name,
             )
             await asyncio.sleep(sleep_secs)
 

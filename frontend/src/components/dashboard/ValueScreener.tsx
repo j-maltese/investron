@@ -24,6 +24,7 @@ import {
 import { useScreenerResults, useScannerStatus, useScreenerSectors, useScreenerIndices } from '@/hooks/useScreener'
 import { useAddToWatchlist } from '@/hooks/useWatchlist'
 import type { ScreenerScore, ScreenerWarning } from '@/lib/types'
+import { formatDateTime } from '@/lib/dateUtils'
 
 
 // ============================================================================
@@ -372,7 +373,7 @@ export function ValueScreener() {
               // Show last-updated timestamp when idle
               <span className="flex items-center gap-1">
                 <Clock className="w-3 h-3" />
-                Updated {new Date(status.last_full_scan_completed_at).toLocaleString()}
+                Updated {formatDateTime(status.last_full_scan_completed_at)}
               </span>
             ) : null}
             {data?.total_count != null && (

@@ -39,3 +39,4 @@ alpaca-py>=0.30.0
 
 # Utilities
 python-dateutil==2.9.0
+tzdata>=2024.1  # IANA timezone DB for zoneinfo on Windows (Linux has it natively)

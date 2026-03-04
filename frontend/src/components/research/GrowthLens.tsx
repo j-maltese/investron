@@ -1,4 +1,5 @@
 import { useGrowthMetrics } from '@/hooks/useCompany'
+import { DataError } from '@/components/ui/DataError'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 
 interface GrowthLensProps {
@@ -13,12 +14,13 @@ function formatLarge(val: number | null | undefined): string {
 }
 
 export function GrowthLens({ ticker }: GrowthLensProps) {
-  const { data, isLoading } = useGrowthMetrics(ticker)
+  const { data, isLoading, isError, error, refetch } = useGrowthMetrics(ticker)
 
   if (isLoading) return <div className="text-[var(--muted-foreground)]">Loading growth metrics...</div>
+  if (isError) return <DataError message={error?.message || 'Failed to load growth metrics'} onRetry={() => refetch()} />
   if (!data) return null
 
-  const revenueGrowthData = data.revenue_growth_rates.map((r: { period: string; growth_rate: number }) => ({
+  const revenueGrowthData = (data.revenue_growth_rates ?? []).map((r: { period: string; growth_rate: number }) => ({
     period: r.period.slice(0, 4), // Just the year
     growth: +(r.growth_rate * 100).toFixed(1),
   }))

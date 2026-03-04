@@ -1,4 +1,5 @@
 import type { TradingOrder } from '@/lib/types'
+import { formatDateTime } from '@/lib/dateUtils'
 
 function formatMoney(value?: number | null): string {
   if (value == null) return '-'
@@ -52,7 +53,7 @@ export function OrdersTable({ orders, totalCount }: OrdersTableProps) {
                 className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--muted)] transition-colors"
               >
                 <td className="px-4 py-2.5 text-xs text-[var(--muted-foreground)]">
-                  {new Date(order.submitted_at).toLocaleString()}
+                  {formatDateTime(order.submitted_at)}
                 </td>
                 <td className="px-4 py-2.5 font-mono font-medium">{order.ticker}</td>
                 <td className="px-4 py-2.5">
