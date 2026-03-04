@@ -376,7 +376,9 @@ export function ValueScreener() {
                 Updated {formatDateTime(status.last_full_scan_completed_at)}
               </span>
             ) : null}
-            {data?.total_count != null && (
+            {/* Hide stale count while a scan is in progress — the progress
+                indicator (20/2762) is more useful than the leftover count. */}
+            {data?.total_count != null && !status?.is_running && (
               <span className="text-[var(--muted-foreground)]">
                 {data.total_count} companies scored
               </span>
