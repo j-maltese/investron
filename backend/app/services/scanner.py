@@ -324,8 +324,32 @@ async def scanner_loop() -> None:
     # Brief delay: let the app finish starting and DB connections warm up
     await asyncio.sleep(2)
 
-    # Run immediately on startup to ensure fresh data
+    # Check if a scan completed recently — skip the immediate run if so.
+    # This prevents a full re-scan on every deploy (Railway restarts the container).
     first_run = True
+    try:
+        if _db.async_session_factory:
+            async with _db.async_session_factory() as db:
+                row = (await db.execute(
+                    text("SELECT last_full_scan_completed_at FROM scanner_status WHERE id = 1")
+                )).mappings().first()
+                if row and row["last_full_scan_completed_at"]:
+                    age_hours = (datetime.now(timezone.utc) - row["last_full_scan_completed_at"]).total_seconds() / 3600
+                    if age_hours < 20:
+                        # Last scan is less than 20 hours old — skip immediate run,
+                        # wait for the next scheduled hour instead.
+                        logger.info(
+                            "Last scan completed %.1f hours ago — skipping startup scan",
+                            age_hours,
+                        )
+                        first_run = False
+                    else:
+                        logger.info(
+                            "Last scan completed %.1f hours ago — running startup scan",
+                            age_hours,
+                        )
+    except Exception as e:
+        logger.warning("Could not check last scan time: %s — running startup scan", e)
 
     while True:
         if not first_run:

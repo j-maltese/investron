@@ -44,12 +44,16 @@ export function useScreenerResults(params?: ScreenerParams) {
  * Polls frequently so the "Scanning... (150/503)" indicator stays up to date.
  */
 export function useScannerStatus() {
-  return useQuery({
+  const query = useQuery({
     queryKey: ['scanner-status'],
     queryFn: () => api.getScannerStatus(),
-    staleTime: 30_000,          // 30 seconds
-    refetchInterval: 60_000,    // Poll every minute while viewing the Dashboard
+    staleTime: 5_000,
+    // Poll every 10s while a scan is running so the progress counter
+    // updates visibly; drop to every 60s when idle.
+    refetchInterval: (query) =>
+      query.state.data?.is_running ? 10_000 : 60_000,
   })
+  return query
 }
 
 /**
