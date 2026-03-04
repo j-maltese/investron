@@ -473,7 +473,7 @@ function DateRangeBar({
         From
         <DatePicker
           selected={dateFrom}
-          onChange={(date) => setDateFrom(date)}
+          onChange={(date: Date | null) => setDateFrom(date)}
           showTimeSelect
           timeIntervals={15}
           dateFormat="MMM d, yyyy h:mm aa"
@@ -489,7 +489,7 @@ function DateRangeBar({
         To
         <DatePicker
           selected={dateTo}
-          onChange={(date) => setDateTo(date)}
+          onChange={(date: Date | null) => setDateTo(date)}
           showTimeSelect
           timeIntervals={15}
           dateFormat="MMM d, yyyy h:mm aa"
