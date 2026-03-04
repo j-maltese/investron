@@ -44,7 +44,7 @@ async def get_screener_results(
     sector: str | None = Query(None),
     index: str | None = Query(None),
     min_score: float | None = Query(None, ge=0, le=100),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=5000),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
@@ -84,7 +84,9 @@ async def get_screener_results(
     # NULLs should sort last for DESC (best first), first for ASC
     null_order = "NULLS LAST" if sort_order == "desc" else "NULLS FIRST"
 
-    # Fetch results — sort_by is validated against ALLOWED_SORT_COLUMNS above
+    # Compute rank dynamically via ROW_NUMBER() so it always reflects:
+    # - The current scores (never stale from a previous/interrupted scan)
+    # - The active filter set (rank within "Dow 30" or "Energy", not global)
     result = await db.execute(
         text(f"""
             SELECT
@@ -93,7 +95,8 @@ async def get_screener_results(
                 s.roe, s.debt_to_equity, s.dividend_yield,
                 s.graham_number, s.margin_of_safety,
                 s.fcf_yield, s.earnings_yield,
-                s.composite_score, s.rank,
+                s.composite_score,
+                ROW_NUMBER() OVER (ORDER BY s.composite_score DESC NULLS LAST) AS rank,
                 s.warnings, s.indices, s.scored_at
             FROM screener_scores s
             {where_clause}
