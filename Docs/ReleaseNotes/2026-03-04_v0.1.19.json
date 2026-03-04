@@ -1,0 +1,17 @@
+{
+  "version": "0.1.19",
+  "date": "2026-03-04",
+  "title": "v0.1.19",
+  "summary": "Release 0.1.19 includes 3 enhancements.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Poll scanner status faster while scan is running",
+        "Hide stale company count while scanner is running",
+        "Skip startup scan if last scan completed recently"
+      ]
+    }
+  ]
+}
