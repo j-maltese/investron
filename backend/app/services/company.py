@@ -8,21 +8,61 @@ from app.services import edgar, yfinance_svc
 logger = logging.getLogger(__name__)
 
 
-async def search_companies(query: str) -> list[dict]:
+async def search_companies(query: str, db: AsyncSession | None = None) -> list[dict]:
     """Search for companies by ticker or name.
 
-    Uses SEC EDGAR's company tickers file for comprehensive matching.
-    """
-    # First try as an exact ticker lookup via yfinance (fast)
-    info = await yfinance_svc.get_stock_info(query.upper())
-    results = []
+    Strategy: first search the local screener_scores table (fast, covers ~2000
+    scored stocks) by both ticker prefix and company name substring. If no local
+    matches are found, fall back to yfinance for an exact ticker lookup so the
+    user can still find stocks outside the scored universe.
 
-    if info and info.get("name"):
-        results.append({
-            "ticker": info["ticker"],
-            "name": info["name"],
-            "exchange": info.get("exchange"),
-        })
+    The db session should be passed from the API endpoint via FastAPI's Depends(get_db).
+    """
+    query = query.strip()
+    if not query:
+        return []
+
+    results: list[dict] = []
+
+    # Search screener_scores for ticker prefix OR company name substring (case-insensitive)
+    if db is not None:
+        try:
+            rows = await db.execute(
+                text("""
+                    SELECT ticker, company_name, sector
+                    FROM screener_scores
+                    WHERE ticker ILIKE :prefix OR company_name ILIKE :substring
+                    ORDER BY
+                        -- Exact ticker match first, then prefix match, then name match
+                        CASE
+                            WHEN UPPER(ticker) = UPPER(:raw) THEN 0
+                            WHEN ticker ILIKE :prefix THEN 1
+                            ELSE 2
+                        END,
+                        composite_score DESC NULLS LAST
+                    LIMIT 10
+                """),
+                {"prefix": f"{query}%", "substring": f"%{query}%", "raw": query},
+            )
+            for row in rows.mappings().all():
+                results.append({
+                    "ticker": row["ticker"],
+                    "name": row["company_name"] or "",
+                    "exchange": None,
+                })
+        except Exception:
+            # DB might not have screener_scores yet (first run); fall through to yfinance
+            logger.debug("screener_scores search failed, falling back to yfinance", exc_info=True)
+
+    # If no local matches, try yfinance exact ticker lookup as fallback
+    if not results:
+        info = await yfinance_svc.get_stock_info(query.upper())
+        if info and info.get("name"):
+            results.append({
+                "ticker": info["ticker"],
+                "name": info["name"],
+                "exchange": info.get("exchange"),
+            })
 
     return results
 

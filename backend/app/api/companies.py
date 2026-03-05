@@ -7,9 +7,9 @@ router = APIRouter()
 
 
 @router.get("/search")
-async def search(q: str = Query(..., min_length=1)):
+async def search(q: str = Query(..., min_length=1), db: AsyncSession = Depends(get_db)):
     """Search companies by ticker or name."""
-    results = await search_companies(q)
+    results = await search_companies(q, db=db)
     return {"results": results}
 
 

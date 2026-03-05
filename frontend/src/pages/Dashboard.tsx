@@ -4,6 +4,7 @@ import { Plus, Trash2, AlertTriangle, ExternalLink } from 'lucide-react'
 import { PageLayout } from '@/components/layout/PageLayout'
 import { useWatchlist, useAlerts, useAddToWatchlist, useRemoveFromWatchlist } from '@/hooks/useWatchlist'
 import { ValueScreener } from '@/components/dashboard/ValueScreener'
+import { TickerAutocomplete } from '@/components/search/TickerAutocomplete'
 
 function formatCurrency(value?: number | null): string {
   if (value == null) return 'N/A'
@@ -60,16 +61,22 @@ export function Dashboard() {
             <h2 className="font-semibold text-lg">Watchlist</h2>
           </div>
 
-          {/* Add ticker form */}
+          {/* Add ticker form — autocomplete searches by ticker or company name */}
           <div className="flex gap-2 mb-4">
-            <input
-              type="text"
-              value={newTicker}
-              onChange={(e) => setNewTicker(e.target.value)}
-              placeholder="Ticker (e.g. AAPL)"
-              className="input flex-1 text-sm"
-              onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
-            />
+            <div className="flex-1">
+              <TickerAutocomplete
+                value={newTicker}
+                onChange={setNewTicker}
+                onSelect={(result) => {
+                  setNewTicker(result.ticker)
+                  // Auto-submit if target price is empty (common flow: search → pick → add)
+                }}
+                placeholder="Search ticker or company..."
+                showIcon={false}
+                clearOnSelect={false}
+                allowRawTicker={true}
+              />
+            </div>
             <input
               type="number"
               value={newTarget}

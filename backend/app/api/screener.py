@@ -47,6 +47,7 @@ async def get_screener_results(
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     sector: str | None = Query(None),
     index: str | None = Query(None),
+    search: str | None = Query(None, min_length=1, max_length=100),
     min_score: float | None = Query(None, ge=0, le=100),
     limit: int = Query(50, ge=1, le=5000),
     offset: int = Query(0, ge=0),
@@ -59,6 +60,7 @@ async def get_screener_results(
       sort_order: "asc" or "desc"
       sector: filter by GICS sector name
       index: filter by index membership (e.g., "S&P 500", "Dow 30")
+      search: filter by ticker prefix or company name substring (case-insensitive)
       min_score: minimum composite score threshold
       limit/offset: pagination
     """
@@ -78,6 +80,12 @@ async def get_screener_results(
         # JSONB @> (contains) operator: filter rows whose indices array contains this index
         where_parts.append("s.indices @> CAST(:index_filter AS jsonb)")
         params["index_filter"] = json.dumps([index])
+
+    if search:
+        # Match ticker prefix OR company name substring (case-insensitive)
+        where_parts.append("(s.ticker ILIKE :search_prefix OR s.company_name ILIKE :search_substring)")
+        params["search_prefix"] = f"{search}%"
+        params["search_substring"] = f"%{search}%"
 
     if min_score is not None:
         where_parts.append("s.composite_score >= :min_score")
