@@ -72,7 +72,7 @@ def _get_stock_info_sync(ticker: str) -> dict | None:
     if not info or info.get("regularMarketPrice") is None:
         return None
 
-    return {
+    result = {
         "ticker": ticker.upper(),
         "name": info.get("longName") or info.get("shortName", ""),
         "sector": info.get("sector"),
@@ -102,6 +102,19 @@ def _get_stock_info_sync(ticker: str) -> dict | None:
         "fifty_two_week_high": info.get("fiftyTwoWeekHigh"),
         "fifty_two_week_low": info.get("fiftyTwoWeekLow"),
     }
+
+    # yfinance occasionally returns the string 'Infinity'/'-Infinity' instead of
+    # a float for fields like forwardPE and priceToSalesTrailing12Months. These
+    # poison downstream scoring (str vs float comparisons) and DB inserts (can't
+    # cast to NUMERIC). Convert them to None at the source so all consumers are safe.
+    import math
+    for key, value in result.items():
+        if isinstance(value, str) and value.lower() in ("infinity", "-infinity", "inf", "-inf"):
+            result[key] = None
+        elif isinstance(value, float) and (math.isinf(value) or math.isnan(value)):
+            result[key] = None
+
+    return result
 
 
 async def get_stock_info(ticker: str) -> dict | None:
