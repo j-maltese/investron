@@ -359,8 +359,14 @@ VALUES
         "max_ai_calls_per_cycle": 5,
         "check_interval_minutes": 30
     }'::jsonb),
-    ('wheel', 'The Wheel Strategy', 'wheel', 5000.00, 5000.00, '{
-        "symbol_list": ["F", "SOFI", "INTC", "PLTR", "BAC", "AMD"],
+    ('wheel', 'The Wheel Strategy', 'wheel', 30000.00, 30000.00, '{
+        "screener_enabled": true,
+        "screener_min_score": 40.0,
+        "screener_max_price": 200.0,
+        "screener_min_market_cap": 1000000000,
+        "screener_top_n": 20,
+        "max_per_sector": 2,
+        "symbol_list": [],
         "delta_min": 0.15,
         "delta_max": 0.30,
         "yield_min": 0.04,
@@ -377,3 +383,28 @@ VALUES
         "check_interval_minutes": 15
     }'::jsonb)
 ON CONFLICT (id) DO NOTHING;
+
+-- Upgrade Wheel strategy: bump capital to $30k and enable screener-driven candidates.
+-- Uses jsonb_set to merge new fields without overwriting existing config (idempotent).
+-- The || operator merges: existing keys preserved, new keys added, listed keys updated.
+UPDATE trading_strategies
+SET
+    initial_capital = CASE
+        -- Only bump initial_capital if it's still at the old $5000 default
+        WHEN initial_capital = 5000.00 THEN 30000.00
+        ELSE initial_capital
+    END,
+    current_cash = CASE
+        -- Only bump cash if strategy hasn't started trading yet (still at original $5000)
+        WHEN current_cash = 5000.00 AND total_pnl = 0 THEN 30000.00
+        ELSE current_cash
+    END,
+    config = config || '{
+        "screener_enabled": true,
+        "screener_min_score": 40.0,
+        "screener_max_price": 200.0,
+        "screener_min_market_cap": 1000000000,
+        "screener_top_n": 20,
+        "max_per_sector": 2
+    }'::jsonb
+WHERE id = 'wheel';

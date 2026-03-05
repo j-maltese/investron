@@ -37,8 +37,9 @@ export function StrategyCard({ strategy }: StrategyCardProps) {
     startMutation.isPending || stopMutation.isPending ||
     pauseMutation.isPending || resetMutation.isPending
 
-  // Simple stock discovers candidates from the screener — no fixed ticker list
-  const tickers = strategy.strategy_type === 'wheel'
+  // Wheel can run in screener-driven mode (dynamic candidates) or legacy fixed list
+  const wheelScreenerEnabled = strategy.strategy_type === 'wheel' && strategy.config.screener_enabled
+  const fixedTickers = strategy.strategy_type === 'wheel' && !wheelScreenerEnabled
     ? (strategy.config.symbol_list as string[] || [])
     : []
 
@@ -81,10 +82,10 @@ export function StrategyCard({ strategy }: StrategyCardProps) {
         </div>
       </div>
 
-      {/* Ticker list (Wheel) or discovery label (Simple Stock) */}
-      {tickers.length > 0 ? (
+      {/* Strategy discovery mode label */}
+      {fixedTickers.length > 0 ? (
         <div className="flex flex-wrap gap-1.5">
-          {tickers.map((t) => (
+          {fixedTickers.map((t) => (
             <span
               key={t}
               className="px-2 py-0.5 rounded text-xs font-mono bg-[var(--muted)] text-[var(--muted-foreground)]"
@@ -93,9 +94,13 @@ export function StrategyCard({ strategy }: StrategyCardProps) {
             </span>
           ))}
         </div>
-      ) : strategy.strategy_type === 'simple_stock' && (
+      ) : (
         <div className="text-xs text-[var(--muted-foreground)]">
-          Discovers stocks via screener scores + AI signals
+          {strategy.strategy_type === 'simple_stock'
+            ? 'Discovers stocks via screener scores + AI signals'
+            : wheelScreenerEnabled
+              ? `Selects candidates from value screener (top ${strategy.config.screener_top_n ?? 20}, score ≥ ${strategy.config.screener_min_score ?? 40}, ≤ $${strategy.config.screener_max_price ?? 200})`
+              : 'No tickers configured'}
         </div>
       )}
 
