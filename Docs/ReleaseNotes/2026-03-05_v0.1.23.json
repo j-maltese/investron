@@ -1,0 +1,15 @@
+{
+  "version": "0.1.23",
+  "date": "2026-03-05",
+  "title": "v0.1.23",
+  "summary": "Release 0.1.23 includes 1 enhancement.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Improves search on landing page for search bar, watchlist, and value screener (new)"
+      ]
+    }
+  ]
+}
