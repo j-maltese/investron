@@ -19,7 +19,7 @@ import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import {
   TrendingDown, Clock, Plus, ExternalLink,
-  ArrowUp, ArrowDown, ArrowUpDown, Loader2, RefreshCw,
+  ArrowUp, ArrowDown, ArrowUpDown, Loader2, RefreshCw, Search, X,
 } from 'lucide-react'
 import { useScreenerResults, useScannerStatus, useScreenerSectors, useScreenerIndices, useTriggerScan } from '@/hooks/useScreener'
 import { useAddToWatchlist } from '@/hooks/useWatchlist'
@@ -296,10 +296,21 @@ export function ValueScreener() {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
   const [sectorFilter, setSectorFilter] = useState<string | undefined>()
   const [indexFilter, setIndexFilter] = useState<string | undefined>()
+  const [searchQuery, setSearchQuery] = useState('')
   const [showCount, setShowCount] = useState(25)
 
   // Infinite scroll sentinel ref — observer is set up after data hooks below
   const sentinelRef = useRef<HTMLTableRowElement>(null)
+
+  // Debounce search to avoid firing on every keystroke — 300ms delay
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim())
+      setShowCount(25)  // Reset pagination when search changes
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [searchQuery])
 
   // Data hooks
   const { data, isLoading } = useScreenerResults({
@@ -307,6 +318,7 @@ export function ValueScreener() {
     sort_order: sortOrder,
     sector: sectorFilter,
     index: indexFilter,
+    search: debouncedSearch || undefined,
     limit: showCount,
   })
   const { data: status } = useScannerStatus()
@@ -389,14 +401,33 @@ export function ValueScreener() {
                 indicator (20/2762) is more useful than the leftover count. */}
             {data?.total_count != null && !status?.is_running && (
               <span className="text-[var(--muted-foreground)]">
-                {data.total_count} companies scored
+                {data.total_count} {debouncedSearch ? 'matches' : 'companies scored'}
               </span>
             )}
           </div>
         </div>
 
-        {/* Filter dropdowns: index and sector */}
+        {/* Search + filter dropdowns */}
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Search by ticker or company name */}
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--muted-foreground)]" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search..."
+              className="input text-sm pl-8 pr-7 w-44"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
           {indicesData?.indices && indicesData.indices.length > 0 && (
             <select
               className="input text-sm w-auto"

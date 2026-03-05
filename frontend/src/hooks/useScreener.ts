@@ -20,6 +20,7 @@ interface ScreenerParams {
   sort_order?: 'asc' | 'desc'
   sector?: string
   index?: string
+  search?: string
   min_score?: number
   limit?: number
   offset?: number
