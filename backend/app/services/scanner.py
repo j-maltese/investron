@@ -69,12 +69,27 @@ async def _update_scanner_status(db, **kwargs) -> None:
     await db.commit()
 
 
+def _sanitize_numeric_values(score_data: dict) -> dict:
+    """Replace Infinity/NaN floats with None before DB insert.
+
+    yfinance occasionally returns float('inf') or float('nan') for metrics like
+    forward_pe. PostgreSQL NUMERIC columns can't store these, so we null them out
+    to prevent transaction-aborting errors that cascade to the whole batch.
+    """
+    import math
+    for key, value in score_data.items():
+        if isinstance(value, float) and (math.isinf(value) or math.isnan(value)):
+            score_data[key] = None
+    return score_data
+
+
 async def _upsert_score(db, score_data: dict) -> None:
     """Insert or update a screener score row using PostgreSQL UPSERT.
 
     Uses ON CONFLICT (ticker) DO UPDATE to atomically insert new tickers or
     refresh existing ones. The EXCLUDED pseudo-table references the proposed row.
     """
+    score_data = _sanitize_numeric_values(score_data)
     now = datetime.now(timezone.utc)
     await db.execute(
         text("""
@@ -234,6 +249,10 @@ async def _scan_batch(
                     counters["success"] += 1
                 except Exception as e:
                     logger.warning("DB error upserting %s: %s", ticker, e)
+                    # Rollback the failed transaction so subsequent tickers in this
+                    # batch can still be processed. Without this, a single bad value
+                    # (e.g., Infinity from yfinance) aborts the entire batch.
+                    await db.rollback()
                     counters["error"] += 1
                     failed.setdefault("error", []).append(ticker)
 
@@ -424,6 +443,24 @@ async def scanner_loop() -> None:
 
     # Brief delay: let the app finish starting and DB connections warm up
     await asyncio.sleep(2)
+
+    # Reset stale scans: if `is_running=True` but the process was killed (deploy,
+    # crash, etc.), the flag stays stuck and blocks new scans. Clear it on startup
+    # so the scanner can run again.
+    try:
+        if _db.async_session_factory:
+            async with _db.async_session_factory() as db:
+                row = (await db.execute(
+                    text("SELECT is_running, updated_at FROM scanner_status WHERE id = 1")
+                )).mappings().first()
+                if row and row["is_running"]:
+                    logger.warning(
+                        "Found stale is_running=True on startup (last updated: %s) — resetting",
+                        row["updated_at"],
+                    )
+                    await _update_scanner_status(db, is_running=False, last_error="Reset: stale scan cleared on startup")
+    except Exception as e:
+        logger.warning("Could not check/reset stale scan: %s", e)
 
     # Check if a scan completed recently — skip the immediate run if so.
     # This prevents a full re-scan on every deploy (Railway restarts the container).

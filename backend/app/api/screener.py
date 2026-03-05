@@ -204,3 +204,21 @@ async def trigger_scan(db: AsyncSession = Depends(get_db)):
     # Fire-and-forget: launch scan as a background asyncio task
     asyncio.create_task(run_full_scan())
     return {"message": "Scan started"}
+
+
+@router.post("/reset")
+async def reset_scanner(db: AsyncSession = Depends(get_db)):
+    """Force-reset a stuck scanner by clearing the is_running flag.
+
+    Use when a scan is stuck (e.g., process died mid-scan, deploy killed it).
+    After resetting, you can trigger a new scan via POST /trigger.
+    """
+    await db.execute(
+        text("""
+            UPDATE scanner_status
+            SET is_running = false, last_error = 'Manual reset via API', updated_at = NOW()
+            WHERE id = 1
+        """)
+    )
+    await db.commit()
+    return {"message": "Scanner status reset"}
