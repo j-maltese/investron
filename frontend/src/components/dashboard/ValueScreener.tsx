@@ -313,7 +313,7 @@ export function ValueScreener() {
   }, [searchQuery])
 
   // Data hooks
-  const { data, isLoading } = useScreenerResults({
+  const { data, isLoading, isError } = useScreenerResults({
     sort_by: sortBy,
     sort_order: sortOrder,
     sector: sectorFilter,
@@ -345,7 +345,10 @@ export function ValueScreener() {
 
     observer.observe(el)
     return () => observer.disconnect()
-  }, [data, hasMore, showCount])
+    // Intentionally omit showCount — including it causes the observer to
+    // recreate on every increment, which can rapid-fire multiple loads
+    // before the sentinel scrolls out of view.
+  }, [data, hasMore])
 
   /**
    * Handle column sort clicks.
@@ -466,6 +469,10 @@ export function ValueScreener() {
         <div className="text-center py-8 text-[var(--muted-foreground)] flex items-center justify-center gap-2">
           <Loader2 className="w-4 h-4 animate-spin" />
           Loading screener results...
+        </div>
+      ) : isError ? (
+        <div className="text-center py-8 text-loss">
+          Failed to load screener results. Check your connection and try refreshing.
         </div>
       ) : !data?.results?.length ? (
         <div className="text-center py-8 text-[var(--muted-foreground)]">
