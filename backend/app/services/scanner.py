@@ -70,16 +70,49 @@ async def _update_scanner_status(db, **kwargs) -> None:
 
 
 def _sanitize_numeric_values(score_data: dict) -> dict:
-    """Replace Infinity/NaN floats with None before DB insert.
+    """Replace Infinity/NaN floats with None and clamp extreme values before DB insert.
 
-    yfinance occasionally returns float('inf') or float('nan') for metrics like
-    forward_pe. PostgreSQL NUMERIC columns can't store these, so we null them out
-    to prevent transaction-aborting errors that cascade to the whole batch.
+    Two problems this solves:
+    1. yfinance returns float('inf')/float('nan') — PostgreSQL NUMERIC can't store these.
+    2. Extreme but finite values (e.g., revenue_growth=1194178.9, beta=-3955) overflow
+       the NUMERIC(precision, scale) column constraints, aborting the transaction.
+
+    We clamp to the max absolute value each column can hold, derived from the schema:
+      NUMERIC(p, s) stores up to 10^(p-s) - 1 before the decimal point.
     """
     import math
+
+    # Column name → max absolute value based on schema NUMERIC(precision, scale).
+    # Only columns where yfinance has historically returned extreme outliers are listed.
+    _COLUMN_LIMITS = {
+        "beta": 99.9999,                # NUMERIC(6,4) → 2 integer digits
+        "revenue_growth": 9999.999999,   # NUMERIC(10,6) → 4 integer digits
+        "earnings_growth": 9999.999999,  # NUMERIC(10,6)
+        "roe": 9999.999999,              # NUMERIC(10,6)
+        "net_margin": 9999.999999,       # NUMERIC(10,6)
+        "dividend_yield": 9999.999999,   # NUMERIC(10,6)
+        "pe_ratio": 99999999.99,         # NUMERIC(10,2) → 8 integer digits
+        "forward_pe": 99999999.99,       # NUMERIC(10,2)
+        "pb_ratio": 99999999.99,         # NUMERIC(10,2)
+        "ps_ratio": 99999999.99,         # NUMERIC(10,2)
+        "debt_to_equity": 99999999.99,   # NUMERIC(10,2)
+        "current_ratio": 9999.9999,      # NUMERIC(10,4)
+        "margin_of_safety": 9999.9999,   # NUMERIC(10,4)
+    }
+
     for key, value in score_data.items():
-        if isinstance(value, float) and (math.isinf(value) or math.isnan(value)):
+        # Defense-in-depth: catch 'Infinity' strings that slipped past yfinance_svc
+        if isinstance(value, str) and value.lower() in ("infinity", "-infinity", "inf", "-inf"):
             score_data[key] = None
+        elif isinstance(value, float):
+            if math.isinf(value) or math.isnan(value):
+                score_data[key] = None
+            elif key in _COLUMN_LIMITS:
+                limit = _COLUMN_LIMITS[key]
+                if value > limit:
+                    score_data[key] = limit
+                elif value < -limit:
+                    score_data[key] = -limit
     return score_data
 
 
