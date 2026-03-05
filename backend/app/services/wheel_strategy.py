@@ -31,10 +31,12 @@ Design philosophy:
   - Rolling: avoid forced assignment on deteriorating stocks
   - Every decision, execution, and restriction is logged to the activity feed
 
-Each of the configured tickers (default: F, SOFI, INTC, PLTR, BAC, AMD)
-independently tracks its own wheel phase. The strategy never uses AI — all
-decisions are mechanical, based on delta, DTE, yield, and open interest
-thresholds from the strategy's JSONB config.
+Ticker selection is screener-driven by default: each cycle queries the value
+screener for top-scoring stocks that are affordable (price x 100 <= capital)
+and have sufficient market cap for options liquidity. A legacy fixed
+symbol_list mode is supported for backward compatibility. The strategy
+does not use AI for trade decisions — all decisions are mechanical, based
+on delta, DTE, yield, and open interest thresholds from the JSONB config.
 """
 
 import logging
@@ -46,6 +48,101 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services import trading_db, alpaca_client
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Candidate selection — screener-driven or legacy fixed symbol list
+# ---------------------------------------------------------------------------
+
+
+async def _get_wheel_candidates(
+    db: AsyncSession, strategy: dict
+) -> list[tuple[str, float]]:
+    """Select tickers for this Wheel cycle, sorted by price ascending.
+
+    Two modes controlled by the strategy config:
+      1. Screener-driven (default): query screener_scores for top-scoring stocks
+         that pass affordability and market cap filters. This lets the Wheel
+         benefit from the platform's full value screening (Graham, P/E, MoS, etc.).
+      2. Legacy fixed list: iterate config["symbol_list"]. Kept for backward
+         compatibility and for users who prefer a curated watchlist.
+
+    Returns list of (ticker, current_price) tuples sorted by price ascending,
+    so cheaper stocks get first dibs on available capital.
+    """
+    config = strategy.get("config", {})
+    symbol_list = config.get("symbol_list", [])
+
+    # Legacy mode: use the fixed symbol list if it's populated and screener
+    # is not explicitly enabled. This ensures existing deployments keep working.
+    if symbol_list and not config.get("screener_enabled", False):
+        result: list[tuple[str, float]] = []
+        for sym in symbol_list:
+            price = await _get_latest_price(sym)
+            if price is not None and price > 0:
+                result.append((sym, price))
+            else:
+                logger.warning("Could not get price for %s, skipping this cycle", sym)
+        result.sort(key=lambda x: x[1])
+        return result
+
+    # Screener-driven mode: pull top candidates from the value screener.
+    # Filters:
+    #   - composite_score >= min threshold (default 40 — lower than Simple Stock's 60
+    #     because the Wheel profits from premium, not just stock appreciation)
+    #   - price <= max_price (assignment cost = price x 100, must fit in capital)
+    #   - market_cap >= min (options liquidity correlates with market cap)
+    min_score = config.get("screener_min_score", 40.0)
+    max_price = config.get("screener_max_price", 200.0)
+    min_market_cap = config.get("screener_min_market_cap", 1_000_000_000)
+    top_n = config.get("screener_top_n", 20)
+
+    # Query screener for affordable, liquid, high-value candidates
+    rows = await db.execute(
+        text("""
+            SELECT ticker, composite_score, price, sector
+            FROM screener_scores
+            WHERE composite_score >= :min_score
+              AND price IS NOT NULL
+              AND price > 0
+              AND price <= :max_price
+              AND market_cap IS NOT NULL
+              AND market_cap >= :min_market_cap
+            ORDER BY composite_score DESC
+            LIMIT :top_n
+        """),
+        {
+            "min_score": min_score,
+            "max_price": max_price,
+            "min_market_cap": min_market_cap,
+            "top_n": top_n,
+        },
+    )
+    candidates = [dict(row) for row in rows.mappings().all()]
+
+    # Sector diversification: max positions per sector prevents correlation risk.
+    # E.g., don't wheel 5 tech stocks that all drop together on a sector rotation.
+    max_per_sector = config.get("max_per_sector", 2)
+    sector_counts: dict[str, int] = {}
+    filtered: list[tuple[str, float]] = []
+
+    for c in candidates:
+        sector = c.get("sector") or "Unknown"
+        if sector_counts.get(sector, 0) >= max_per_sector:
+            continue
+        sector_counts[sector] = sector_counts.get(sector, 0) + 1
+        filtered.append((c["ticker"], float(c["price"])))
+
+    # Sort by price ascending — cheapest stocks get capital allocation first
+    filtered.sort(key=lambda x: x[1])
+
+    logger.info(
+        "Wheel candidates: %d from screener (min_score=%.0f, max_price=$%.0f, min_mcap=$%dM, %d sectors)",
+        len(filtered), min_score, max_price, min_market_cap / 1_000_000,
+        len(sector_counts),
+    )
+
+    return filtered
 
 
 # ---------------------------------------------------------------------------
@@ -64,11 +161,8 @@ async def run_wheel_cycle(db: AsyncSession, strategy: dict) -> None:
     API error, no option chain) does NOT block other tickers.
     """
     strategy_id = strategy["id"]
-    config = strategy.get("config", {})
-    symbol_list = config.get("symbol_list", [])
 
-    logger.info("Wheel cycle starting (%d symbols, cash=$%.2f)",
-                len(symbol_list), float(strategy["current_cash"]))
+    logger.info("Wheel cycle starting (cash=$%.2f)", float(strategy["current_cash"]))
 
     # --- Step 1: Sync pending orders with Alpaca ---
     # Must run FIRST so we know which orders have filled before making decisions.
@@ -99,20 +193,23 @@ async def run_wheel_cycle(db: AsyncSession, strategy: dict) -> None:
     for pos in open_positions:
         ticker_positions.setdefault(pos["ticker"], []).append(pos)
 
-    # --- Step 5: Sort symbols by affordability (cheapest first) ---
-    # With $5,000 capital and tickers ranging from ~$5 to ~$100+, we process
-    # cheaper stocks first so they get first dibs on available capital.
-    # We fetch prices for all symbols to sort, then process in order.
-    symbol_prices: list[tuple[str, float]] = []
-    for sym in symbol_list:
-        price = await _get_latest_price(sym)
-        if price is not None and price > 0:
-            symbol_prices.append((sym, price))
-        else:
-            logger.warning("Could not get price for %s, skipping this cycle", sym)
+    # --- Step 5: Get candidates sorted by affordability (cheapest first) ---
+    # Screener-driven by default: queries value screener for top-scoring stocks
+    # filtered by price, market cap, and sector diversification.
+    # Falls back to legacy symbol_list if configured.
+    symbol_prices = await _get_wheel_candidates(db, strategy)
 
-    # Sort ascending by price — cheapest stocks get capital first
-    symbol_prices.sort(key=lambda x: x[1])
+    # --- Step 5b: Ensure tickers with open positions are always processed ---
+    # Screener candidates change each cycle (scores shift, prices move). If we sold
+    # a put on ticker X last cycle and X drops off the screener, we still need to
+    # monitor it — rolling, hard stops, assignment detection, covered calls all depend
+    # on processing the ticker. Without this, dropped tickers become orphaned.
+    candidate_tickers = set(t for t, _ in symbol_prices)
+    for ticker in set(ticker_positions.keys()) - candidate_tickers:
+        price = await _get_latest_price(ticker)
+        if price is not None and price > 0:
+            symbol_prices.append((ticker, price))
+            logger.info("Including %s (open position, no longer in screener candidates)", ticker)
 
     # --- Step 6: Calculate available cash (subtract cash committed to open puts) ---
     # "Cash-secured" means we must reserve strike × 100 for each open put position.
@@ -467,13 +564,18 @@ async def _detect_assignments(db: AsyncSession, strategy: dict) -> None:
       3. Call assigned: our call is gone AND stock is gone → shares called away
       4. Call expired OTM: our call is gone but stock remains → expired worthless
 
-    IMPORTANT: We only match against tickers in this strategy's symbol_list and
-    positions we track locally. The Simple Stock strategy may hold the same tickers,
-    so we must not confuse their positions with ours.
+    IMPORTANT: We only match Alpaca positions against tickers we have open local
+    positions for in THIS strategy. The Simple Stock strategy may hold the same
+    tickers, so we use strategy_id-scoped DB positions as the filter — not the
+    candidate list (which changes each cycle with screener-driven selection).
     """
     strategy_id = strategy["id"]
-    config = strategy.get("config", {})
-    symbol_list = set(config.get("symbol_list", []))
+
+    # Build the set of tickers we're actively tracking from our local DB positions.
+    # This is the correct filter for assignment detection — we only care about
+    # tickers where we have an open put, assigned stock, or covered call.
+    our_positions = await trading_db.get_open_positions(db, strategy_id)
+    tracked_tickers = set(pos["ticker"] for pos in our_positions)
 
     # Fetch Alpaca's current positions (across entire account)
     try:
@@ -491,13 +593,13 @@ async def _detect_assignments(db: AsyncSession, strategy: dict) -> None:
         symbol = ap["symbol"]
         asset_class = ap.get("asset_class", "us_equity")
 
-        if asset_class == "us_equity" and symbol in symbol_list:
+        if asset_class == "us_equity" and symbol in tracked_tickers:
             alpaca_stock_symbols.add(symbol)
         elif asset_class == "us_option":
             # Parse the OCC symbol to get the underlying ticker
             try:
                 parsed = alpaca_client.parse_occ_symbol(symbol)
-                if parsed["underlying"] in symbol_list:
+                if parsed["underlying"] in tracked_tickers:
                     alpaca_option_symbols.add(symbol)
             except ValueError:
                 pass  # Not a valid OCC symbol — skip

@@ -64,6 +64,11 @@ export const api = {
   getFilings: (ticker: string, types?: string) =>
     apiFetch<FilingsResponse>(`/api/filings/${ticker}${types ? `?types=${types}` : ''}`),
 
+  refreshFilings: (ticker: string, types?: string) =>
+    apiFetch<FilingsResponse & { new_count: number }>(`/api/filings/${ticker}/refresh${types ? `?types=${types}` : ''}`, {
+      method: 'POST',
+    }),
+
   runDCF: (ticker: string, inputs: DCFInput) =>
     apiFetch<DCFResult>(`/api/valuation/${ticker}/dcf`, {
       method: 'POST',

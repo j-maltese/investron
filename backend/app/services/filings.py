@@ -80,3 +80,53 @@ async def get_filings(
         "filings": all_filings,
         "total_count": len(all_filings),
     }
+
+
+async def refresh_filings(
+    db: AsyncSession,
+    ticker: str,
+    filing_types: list[str] | None = None,
+) -> dict:
+    """Re-fetch the filing list from EDGAR, picking up any new submissions.
+
+    Unlike get_filings() which returns from cache when rows exist, this always
+    hits EDGAR's submissions API and upserts new filings into filings_cache.
+    Existing rows are preserved (ON CONFLICT DO NOTHING on accession_number).
+    This is a metadata-only refresh — no embedding or chunking happens here.
+    """
+    company = await get_or_create_company(db, ticker)
+    if not company:
+        return {"ticker": ticker, "filings": [], "total_count": 0, "new_count": 0}
+
+    cik = company.get("cik", "").zfill(10)
+    submissions = await edgar.get_company_submissions(cik)
+    if not submissions:
+        return {"ticker": ticker, "filings": [], "total_count": 0, "new_count": 0}
+
+    all_filings = edgar.parse_filings_from_submissions(submissions, filing_types)
+
+    # Upsert into cache — ON CONFLICT DO NOTHING means only truly new filings get inserted.
+    # We count inserts to report how many new filings were found.
+    new_count = 0
+    for f in all_filings:
+        result = await db.execute(
+            text("""
+                INSERT INTO filings_cache (company_id, filing_type, filing_date, accession_number, filing_url, description)
+                VALUES (:company_id, :filing_type, :filing_date, :accession_number, :filing_url, :description)
+                ON CONFLICT (company_id, accession_number) DO NOTHING
+            """),
+            {
+                "company_id": company["id"],
+                "filing_type": f["filing_type"],
+                "filing_date": date.fromisoformat(f["filing_date"]) if isinstance(f["filing_date"], str) else f["filing_date"],
+                "accession_number": f["accession_number"],
+                "filing_url": f["filing_url"],
+                "description": f["description"],
+            },
+        )
+        if result.rowcount > 0:
+            new_count += 1
+    await db.commit()
+
+    # Return the full updated cache (including both old and new filings)
+    return await get_filings(db, ticker, filing_types) | {"new_count": new_count}
