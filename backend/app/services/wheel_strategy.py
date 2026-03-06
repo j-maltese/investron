@@ -1338,8 +1338,7 @@ def _select_best_option(
             continue  # Wrong type (e.g., we want puts but this is a call)
 
         strike = parsed["strike"]
-        expiration_str = parsed["expiration"]
-        exp_date = date_type.fromisoformat(expiration_str)
+        exp_date = parsed["expiration"]
 
         # --- Step 2: Strike constraint ---
         if max_strike is not None and strike > max_strike:

@@ -85,14 +85,22 @@ async def search_filing_chunks(
     # Fetch more than top_k to allow token budget trimming
     fetch_limit = top_k * 2
 
-    # No ::vector cast needed — our registered pgvector codec handles
-    # serialization, and asyncpg infers the vector type from the <=> operator.
+    # Pre-filter with a CTE so Postgres does an exact nearest-neighbor scan
+    # on the ticker's subset instead of using the global HNSW index.  The HNSW
+    # index doesn't support pre-filtering, so without this, the planner may
+    # scan only ~40 globally-nearest vectors, post-filter by ticker, and
+    # return 0 results for tickers whose embeddings aren't in that neighborhood.
     sql = text(f"""
-        SELECT chunk_text, filing_type, filing_date::text, section_name,
+        WITH filtered AS (
+            SELECT chunk_text, filing_type, filing_date::text AS filing_date,
+                   section_name, category, topics, is_table, token_count, embedding
+            FROM filing_chunks
+            WHERE {where_sql}
+        )
+        SELECT chunk_text, filing_type, filing_date, section_name,
                category, topics, is_table, token_count,
                1 - (embedding <=> :query_embedding) AS similarity
-        FROM filing_chunks
-        WHERE {where_sql}
+        FROM filtered
         ORDER BY embedding <=> :query_embedding
         LIMIT :fetch_limit
     """)
