@@ -1,0 +1,16 @@
+{
+  "version": "0.1.29",
+  "date": "2026-03-06",
+  "title": "v0.1.29",
+  "summary": "Release 0.1.29 includes 2 enhancements.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Merge remote-tracking branch 'origin/main' into dev",
+        "Auto-sync release notes from main back to dev"
+      ]
+    }
+  ]
+}
