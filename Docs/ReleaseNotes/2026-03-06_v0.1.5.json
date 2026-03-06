@@ -1,0 +1,20 @@
+{
+  "version": "0.1.5",
+  "date": "2026-03-06",
+  "title": "v0.1.5",
+  "summary": "Release 0.1.5 includes 6 enhancements.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Fixes implied volatility alpaca attribute",
+        "Updates wheel to use filings",
+        "Fixes infinity issue in value scranner",
+        "Merge main into dev: pick up release notes from v0.1.1",
+        "Updates to value screener",
+        "Fixes for screener issues"
+      ]
+    }
+  ]
+}
