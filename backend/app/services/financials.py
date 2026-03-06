@@ -6,6 +6,12 @@ from app.services import edgar, yfinance_svc
 from app.services.company import get_or_create_company
 from app.utils.cache import get_cached_data, set_cached_data
 
+# Bump this when the XBRL extraction logic changes (concept mappings, merge
+# strategy, etc.) to automatically invalidate all cached financial statements.
+# Old cache entries with the previous version simply won't match and will be
+# re-fetched from EDGAR on next access.
+_XBRL_CACHE_VERSION = 2
+
 
 async def get_financial_statements(
     db: AsyncSession,
@@ -24,8 +30,9 @@ async def get_financial_statements(
     if not company:
         return {"ticker": ticker, "statement_type": statement_type, "period_type": period_type, "statements": []}
 
-    # Check cache
-    cached = await get_cached_data(db, company["id"], "edgar_xbrl", statement_type, period_type)
+    # Check cache — versioned key so logic changes auto-invalidate stale data
+    cache_source = f"edgar_xbrl_v{_XBRL_CACHE_VERSION}"
+    cached = await get_cached_data(db, company["id"], cache_source, statement_type, period_type)
     if cached:
         return cached
 
@@ -66,9 +73,9 @@ async def get_financial_statements(
         "statements": statements,
     }
 
-    # Cache it
+    # Cache it with versioned key
     await set_cached_data(
-        db, company["id"], "edgar_xbrl", statement_type, period_type,
+        db, company["id"], cache_source, statement_type, period_type,
         result, settings.cache_ttl_financials,
     )
 
@@ -129,9 +136,11 @@ async def get_growth_metrics(db: AsyncSession, ticker: str) -> dict:
     if not facts:
         return {"ticker": ticker, "error": True, "error_message": "Unable to fetch SEC filings data"}
 
-    # Revenue growth rates
+    # Revenue growth rates — use all known revenue concepts from the canonical
+    # mapping so we get the full merged time series (ASC 606 transitions, etc.)
+    revenue_concepts = {k: v for k, v in edgar.INCOME_STATEMENT_CONCEPTS.items() if v == "revenue"}
     revenue_series = edgar.extract_financial_time_series(
-        facts, {"Revenues": "revenue", "RevenueFromContractWithCustomerExcludingAssessedTax": "revenue"}, "annual"
+        facts, revenue_concepts, "annual"
     ).get("revenue", [])
 
     growth_rates = []
