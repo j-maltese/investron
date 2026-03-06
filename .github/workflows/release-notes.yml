@@ -67,3 +67,11 @@ jobs:
             git tag "$TAG"
             git push origin "$TAG"
           fi
+
+      - name: Sync release notes back to dev
+        if: steps.generate.outputs.generated == 'true'
+        run: |
+          git fetch origin dev
+          git checkout dev
+          git merge main --no-edit
+          git push origin dev
