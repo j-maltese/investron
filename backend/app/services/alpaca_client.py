@@ -9,6 +9,7 @@ Paper vs live trading is controlled by ALPACA_BASE_URL in config:
 """
 
 import logging
+from datetime import date as date_type
 from functools import lru_cache
 
 from app.config import get_settings
@@ -288,7 +289,7 @@ def parse_occ_symbol(symbol: str) -> dict:
 
     return {
         "underlying": underlying,
-        "expiration": f"20{yy}-{mm}-{dd}",
+        "expiration": date_type(int(f"20{yy}"), int(mm), int(dd)),
         "option_type": "put" if option_char == "P" else "call",
         "strike": int(strike_raw) / 1000,
     }
