@@ -22,10 +22,11 @@ logger = logging.getLogger(__name__)
 _last_auto_index_date: date_type | None = None
 
 # US market hours in Eastern Time — DST-aware via zoneinfo.
-# Buffer: start 5 min before open, end 5 min after close, to catch
-# opening fills and closing-auction activity.
+# Start at 9:15 so the first 15-min cycle completes before the 9:30 bell,
+# ensuring the engine is warmed up (positions synced, prices fetched) by open.
+# End at 4:05 to catch closing-auction fills.
 _ET = ZoneInfo("America/New_York")
-_MARKET_OPEN = time(9, 25)   # 9:25 AM ET (5 min before open)
+_MARKET_OPEN = time(9, 15)   # 9:15 AM ET (15 min before open)
 _MARKET_CLOSE = time(16, 5)  # 4:05 PM ET (5 min after close)
 
 
