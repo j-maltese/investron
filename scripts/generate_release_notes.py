@@ -94,10 +94,14 @@ def determine_next_version(base: str, existing: list[str]) -> str:
 
 
 def get_last_version_tag() -> str | None:
-    """Find the most recent vX.Y.Z tag."""
+    """Find the most recent vX.Y.Z tag reachable from HEAD.
+
+    Uses --merged to only consider tags that are ancestors of the current
+    branch — orphaned tags from rebased/replaced commits are ignored.
+    """
     try:
         tags = subprocess.check_output(
-            ["git", "tag", "-l", "v*", "--sort=-version:refname"],
+            ["git", "tag", "-l", "v*", "--merged", "HEAD", "--sort=-version:refname"],
             text=True, cwd=REPO_ROOT,
         ).strip()
         if tags:

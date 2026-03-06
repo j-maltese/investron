@@ -1,0 +1,17 @@
+{
+  "version": "0.1.11",
+  "date": "2026-02-27",
+  "title": "AI Research Assistant",
+  "summary": "Release 0.1.11 includes 3 new features.",
+  "sections": [
+    {
+      "type": "new_feature",
+      "label": "New Features",
+      "items": [
+        "AI Research Assistant chat tab on company Research page \u2014 GPT-4o powered with streaming markdown responses",
+        "Context builder assembles financial metrics, Graham analysis, growth data, and screener scores for AI prompts",
+        "Local development documentation (LOCAL_DEVELOPMENT.md)"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "version": "0.1.25",
+  "date": "2026-03-06",
+  "title": "Alpaca Greeks Fix and Docs Update",
+  "summary": "Release 0.1.25 includes 1 enhancement, 1 bug fix.",
+  "sections": [
+    {
+      "type": "bug_fix",
+      "label": "Bug Fixes",
+      "items": [
+        "Fix 'OptionsGreeks has no attribute implied_volatility' crash \u2014 all greeks access now uses getattr with None fallback for SDK compatibility"
+      ]
+    },
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Updated TRADING_README.md to reflect $30k capital, screener-driven candidates, new config fields, and revised architecture"
+      ]
+    }
+  ]
+}

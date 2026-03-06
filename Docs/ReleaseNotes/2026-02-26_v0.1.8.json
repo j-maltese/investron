@@ -1,0 +1,16 @@
+{
+  "version": "0.1.8",
+  "date": "2026-02-26",
+  "title": "Column Tooltips and User Guide",
+  "summary": "Release 0.1.8 includes 2 new features.",
+  "sections": [
+    {
+      "type": "new_feature",
+      "label": "New Features",
+      "items": [
+        "Column header tooltips explaining each Value Screener metric \u2014 portal-based to escape scroll container overflow",
+        "Value Screener section in User Guide documentation"
+      ]
+    }
+  ]
+}

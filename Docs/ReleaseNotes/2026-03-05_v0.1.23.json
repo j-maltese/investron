@@ -1,0 +1,17 @@
+{
+  "version": "0.1.23",
+  "date": "2026-03-05",
+  "title": "Scanner Infinity and Overflow Fixes",
+  "summary": "Release 0.1.23 includes 3 bug fixes.",
+  "sections": [
+    {
+      "type": "bug_fix",
+      "label": "Bug Fixes",
+      "items": [
+        "Fix yfinance returning string 'Infinity' for numeric fields (forward_pe, ps_ratio) \u2014 sanitize at source",
+        "Fix extreme numeric values (revenue_growth, beta) overflowing PostgreSQL NUMERIC columns \u2014 per-column clamping with defense-in-depth",
+        "Production scan now completes with 0 errors across 2,743 tickers"
+      ]
+    }
+  ]
+}

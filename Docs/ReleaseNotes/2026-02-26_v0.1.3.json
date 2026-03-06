@@ -1,0 +1,17 @@
+{
+  "version": "0.1.3",
+  "date": "2026-02-26",
+  "title": "Value Screener with S&P 500 Scanner",
+  "summary": "Release 0.1.3 includes 3 new features.",
+  "sections": [
+    {
+      "type": "new_feature",
+      "label": "New Features",
+      "items": [
+        "Value Screener with background S&P 500 scanner \u2014 scans all tickers and scores them on value investing metrics",
+        "Composite scoring with weighted factors: Margin of Safety, P/E, FCF Yield, Earnings Yield, P/B, ROE, D/E, Dividend Yield",
+        "Dockerfile and release notes integration for automated CI/CD"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "version": "0.1.19",
+  "date": "2026-03-04",
+  "title": "Scanner Live Progress",
+  "summary": "Release 0.1.19 includes 3 enhancements.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Poll scanner status faster while a scan is actively running",
+        "Hide stale company count while scanner is in progress to avoid confusion",
+        "Skip startup scan if the last scan completed recently \u2014 prevents redundant 35-minute scans on redeploy"
+      ]
+    }
+  ]
+}

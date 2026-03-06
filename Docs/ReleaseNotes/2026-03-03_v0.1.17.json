@@ -1,0 +1,19 @@
+{
+  "version": "0.1.17",
+  "date": "2026-03-03",
+  "title": "Wheel Options Strategy",
+  "summary": "Release 0.1.17 includes 5 new features.",
+  "sections": [
+    {
+      "type": "new_feature",
+      "label": "New Features",
+      "items": [
+        "The Wheel options strategy \u2014 state machine: sell puts, get assigned, sell calls, called away, repeat",
+        "Option selection with delta/yield/DTE scoring and moneyness fallback when greeks unavailable",
+        "Defensive suite: hard stops (25%), rolling puts, adjusted cost basis tracking, capital efficiency exits (60 day), PDT protection",
+        "Comprehensive observability: decision logs, execution logs, and blocked/restriction logs with full JSONB details",
+        "Wheel Strategy Guide tab in Documentation page (7 sections)"
+      ]
+    }
+  ]
+}
