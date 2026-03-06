@@ -9,7 +9,8 @@ Architecture mirrors scanner.py:
 
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta, date as date_type
+from datetime import datetime, timezone, timedelta, date as date_type, time
+from zoneinfo import ZoneInfo
 
 from app.config import get_settings
 from app.models import database as _db
@@ -20,24 +21,26 @@ logger = logging.getLogger(__name__)
 # Track last auto-index date to gate daily filing indexing (resets on app restart)
 _last_auto_index_date: date_type | None = None
 
-# US market hours in Eastern Time (UTC-5 standard, UTC-4 DST)
-# We use a conservative window: 9:35 AM - 3:55 PM ET
-MARKET_OPEN_UTC = 14  # 9 AM ET = 14:00 UTC (standard time, approximate)
-MARKET_CLOSE_UTC = 21  # 4 PM ET = 21:00 UTC
+# US market hours in Eastern Time — DST-aware via zoneinfo.
+# Buffer: start 5 min before open, end 5 min after close, to catch
+# opening fills and closing-auction activity.
+_ET = ZoneInfo("America/New_York")
+_MARKET_OPEN = time(9, 25)   # 9:25 AM ET (5 min before open)
+_MARKET_CLOSE = time(16, 5)  # 4:05 PM ET (5 min after close)
 
 
 def _is_market_hours() -> bool:
-    """Check if US stock market is currently open (approximate).
+    """Check if US stock market is currently open.
 
-    Uses UTC-based check. Not DST-aware — off by an hour during summer,
-    but good enough to avoid trading at 2 AM.
+    DST-aware — uses America/New_York timezone so the window is always
+    correct regardless of daylight saving transitions.
+    Does not account for market holidays (Alpaca will simply reject orders).
     """
-    now = datetime.now(timezone.utc)
+    now_et = datetime.now(_ET)
     # Skip weekends
-    if now.weekday() >= 5:
+    if now_et.weekday() >= 5:
         return False
-    # Check if within market hours (with buffer)
-    return MARKET_OPEN_UTC <= now.hour < MARKET_CLOSE_UTC
+    return _MARKET_OPEN <= now_et.time() < _MARKET_CLOSE
 
 
 async def run_trading_cycle() -> None:
