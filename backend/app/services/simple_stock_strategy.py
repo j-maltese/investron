@@ -269,15 +269,15 @@ async def _sync_pending_orders(db: AsyncSession, strategy_id: str) -> None:
                                 avg_entry_price=fill_price,
                                 quantity=fill_qty,
                                 cost_basis=round(fill_price * fill_qty, 2),
+                                current_value=round(fill_price * fill_qty, 2),
                             )
-                        # Deduct cash
+                        # Deduct cash (portfolio value is recomputed by sync_strategy_pnl)
                         strategy = await trading_db.get_strategy(db, strategy_id)
                         if strategy:
                             new_cash = float(strategy["current_cash"]) - (fill_price * fill_qty)
                             await trading_db.update_strategy(
                                 db, strategy_id,
                                 current_cash=round(new_cash, 2),
-                                current_portfolio_value=round(fill_price * fill_qty, 2),
                             )
 
                     elif order["side"] == "sell":

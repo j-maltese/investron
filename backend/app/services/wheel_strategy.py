@@ -313,7 +313,30 @@ async def run_wheel_cycle(db: AsyncSession, strategy: dict) -> None:
                 details={"error": str(e)},
             )
 
-    # --- Step 8: Recalculate strategy P&L from all positions ---
+    # --- Step 8: Refresh position values and recalculate strategy P&L ---
+    # Update current_value for all open positions so sync_strategy_pnl
+    # can compute accurate portfolio value and P&L.
+    #
+    # For stock: current_value = current market price × shares
+    # For options: current_value = 0. The premium collected from selling the
+    #   option is already credited to current_cash, so counting it again as
+    #   portfolio value would double-count. The option's "value" to us is the
+    #   difference between premium received and buyback cost, but we don't have
+    #   live option prices — and the cash already reflects the premium.
+    for pos in open_positions:
+        if pos.get("status") != "open":
+            continue
+        if pos.get("asset_type") == "stock":
+            price = await _get_latest_price(pos["ticker"])
+            if price is not None:
+                qty = float(pos.get("quantity", 0))
+                entry = float(pos.get("avg_entry_price", 0))
+                await trading_db.update_position(
+                    db, pos["id"],
+                    current_value=round(price * qty, 2),
+                    unrealized_pnl=round((price - entry) * qty, 2),
+                )
+
     await trading_db.sync_strategy_pnl(db, strategy_id)
     logger.info("Wheel cycle complete")
 
@@ -2025,11 +2048,9 @@ async def _manage_call_position(
     contracts = position.get("contracts") or 1
     premium_received = entry_premium * 100 * contracts
 
-    # Update position with current market data
-    await trading_db.update_position(
-        db, position["id"],
-        current_value=round(premium_received, 2),  # Premium received is our "value"
-    )
+    # Note: we don't set current_value here because the premium is already
+    # reflected in current_cash (credited on fill). Setting current_value to
+    # the premium would double-count it in portfolio calculations.
 
 
 # ---------------------------------------------------------------------------

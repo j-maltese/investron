@@ -83,7 +83,16 @@ async def run_trading_cycle() -> None:
 
         try:
             async with _db.async_session_factory() as db:
+                # Refresh portfolio value from live positions before checking safety
+                await trading_db.sync_strategy_pnl(db, strategy_id)
+                # Re-read strategy after sync so we have fresh numbers
+                strategy = await trading_db.get_strategy(db, strategy_id)
+                if not strategy:
+                    continue
+
                 # Check safety: has drawdown exceeded max_loss_pct?
+                # sync_strategy_pnl (above) recomputed current_portfolio_value
+                # from all open positions, so this is a live snapshot.
                 initial = float(strategy["initial_capital"])
                 cash = float(strategy["current_cash"])
                 portfolio = float(strategy.get("current_portfolio_value", 0))
