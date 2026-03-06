@@ -1,0 +1,16 @@
+{
+  "version": "0.1.34",
+  "date": "2026-03-06",
+  "title": "v0.1.34",
+  "summary": "Release 0.1.34 includes 2 enhancements.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Updates timing strategy",
+        "Fixes timezone issue on Trading strategy"
+      ]
+    }
+  ]
+}
