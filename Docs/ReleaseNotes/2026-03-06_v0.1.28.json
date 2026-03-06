@@ -1,0 +1,16 @@
+{
+  "version": "0.1.28",
+  "date": "2026-03-06",
+  "title": "v0.1.28",
+  "summary": "Release 0.1.28 includes 2 enhancements.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Pins paper trading strategies in place",
+        "Serializes dates to json"
+      ]
+    }
+  ]
+}
