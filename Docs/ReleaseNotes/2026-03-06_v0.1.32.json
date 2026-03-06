@@ -1,0 +1,15 @@
+{
+  "version": "0.1.32",
+  "date": "2026-03-06",
+  "title": "v0.1.32",
+  "summary": "Release 0.1.32 includes 1 enhancement.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Accounting fixes for Trading"
+      ]
+    }
+  ]
+}
