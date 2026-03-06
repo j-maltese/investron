@@ -326,6 +326,77 @@ def build_occ_symbol(
     return f"{underlying}{yy}{mm}{dd}{pc}{strike_int:08d}"
 
 
+async def get_option_quote(option_symbol: str) -> dict | None:
+    """Fetch the latest quote (bid/ask) for a single option symbol.
+
+    Used by the Wheel strategy to compute mark-to-market value for open
+    option positions. Returns the midpoint as 'price', or None if the
+    quote is unavailable.
+    """
+    from alpaca.data.requests import OptionLatestQuoteRequest
+
+    try:
+        client = get_option_data_client()
+        request = OptionLatestQuoteRequest(symbol_or_symbols=option_symbol)
+        quotes = client.get_option_latest_quote(request)
+
+        quote = quotes.get(option_symbol)
+        if not quote:
+            return None
+
+        bid = float(quote.bid_price) if quote.bid_price else 0
+        ask = float(quote.ask_price) if quote.ask_price else 0
+        # Midpoint gives a fair estimate of current option value
+        mid = (bid + ask) / 2 if (bid and ask) else bid or ask
+
+        return {
+            "symbol": option_symbol,
+            "bid_price": bid,
+            "ask_price": ask,
+            "mid_price": round(mid, 4),
+        }
+    except Exception as e:
+        logger.warning("Failed to get option quote for %s: %s", option_symbol, e)
+        return None
+
+
+async def get_option_quotes(option_symbols: list[str]) -> dict[str, dict]:
+    """Fetch latest quotes for multiple option symbols in one call.
+
+    Returns a dict keyed by symbol. Symbols with no quote are omitted.
+    More efficient than calling get_option_quote() in a loop.
+    """
+    from alpaca.data.requests import OptionLatestQuoteRequest
+
+    if not option_symbols:
+        return {}
+
+    try:
+        client = get_option_data_client()
+        request = OptionLatestQuoteRequest(symbol_or_symbols=option_symbols)
+        quotes = client.get_option_latest_quote(request)
+
+        results = {}
+        for symbol, quote in quotes.items():
+            if not quote:
+                continue
+            bid = float(quote.bid_price) if quote.bid_price else 0
+            ask = float(quote.ask_price) if quote.ask_price else 0
+            mid = (bid + ask) / 2 if (bid and ask) else bid or ask
+            results[symbol] = {
+                "symbol": symbol,
+                "bid_price": bid,
+                "ask_price": ask,
+                "mid_price": round(mid, 4),
+            }
+
+        logger.info("Fetched quotes for %d/%d option symbols", len(results), len(option_symbols))
+        return results
+    except Exception as e:
+        logger.warning("Failed to get option quotes: %s", e)
+        return {}
+
+
 async def get_option_chain(
     ticker: str,
     expiration_date_gte: str | None = None,

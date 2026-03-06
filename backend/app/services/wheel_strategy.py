@@ -318,14 +318,23 @@ async def run_wheel_cycle(db: AsyncSession, strategy: dict) -> None:
     # can compute accurate portfolio value and P&L.
     #
     # For stock: current_value = current market price × shares
-    # For options: current_value = 0. The premium collected from selling the
-    #   option is already credited to current_cash, so counting it again as
-    #   portfolio value would double-count. The option's "value" to us is the
-    #   difference between premium received and buyback cost, but we don't have
-    #   live option prices — and the cash already reflects the premium.
+    # For options: current_value = -(buyback_cost). Sold options are liabilities —
+    #   the premium is already in cash, so the position value is the negative of
+    #   what it would cost to buy back. This gives accurate mark-to-market:
+    #   P&L on the option = premium_collected - buyback_cost.
+
+    # Batch-fetch live option quotes for all open option positions in one API call
+    option_positions = [
+        p for p in open_positions
+        if p.get("status") == "open" and p.get("asset_type") == "option" and p.get("option_symbol")
+    ]
+    option_symbols = [p["option_symbol"] for p in option_positions]
+    option_quotes = await alpaca_client.get_option_quotes(option_symbols) if option_symbols else {}
+
     for pos in open_positions:
         if pos.get("status") != "open":
             continue
+
         if pos.get("asset_type") == "stock":
             price = await _get_latest_price(pos["ticker"])
             if price is not None:
@@ -335,6 +344,33 @@ async def run_wheel_cycle(db: AsyncSession, strategy: dict) -> None:
                     db, pos["id"],
                     current_value=round(price * qty, 2),
                     unrealized_pnl=round((price - entry) * qty, 2),
+                )
+
+        elif pos.get("asset_type") == "option":
+            option_symbol = pos.get("option_symbol")
+            quote = option_quotes.get(option_symbol) if option_symbol else None
+            contracts = pos.get("contracts") or 1
+            premium_collected = float(pos.get("cost_basis", 0))  # Total premium we received
+
+            if quote and quote["mid_price"] > 0:
+                # Buyback cost = current mid price × 100 shares × contracts
+                buyback_cost = round(quote["mid_price"] * 100 * contracts, 2)
+                # Position value is negative (liability — what we'd pay to close)
+                current_value = round(-buyback_cost, 2)
+                # P&L = premium we collected minus what it costs to buy back
+                unrealized_pnl = round(premium_collected - buyback_cost, 2)
+
+                await trading_db.update_position(
+                    db, pos["id"],
+                    current_value=current_value,
+                    unrealized_pnl=unrealized_pnl,
+                )
+            elif premium_collected > 0:
+                # No live quote available — show premium as P&L (best estimate)
+                await trading_db.update_position(
+                    db, pos["id"],
+                    current_value=0,
+                    unrealized_pnl=round(premium_collected, 2),
                 )
 
     await trading_db.sync_strategy_pnl(db, strategy_id)

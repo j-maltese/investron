@@ -703,9 +703,17 @@ Strategy cards show **Total Value = cash + portfolio_value**. The portfolio valu
 
 **Wheel positions:**
 - **Stock positions** (assigned phase): `current_value = latest_price × shares` (updated each cycle)
-- **Option positions** (sold puts/calls): `current_value = 0` — the premium is already credited to `current_cash` on fill, so counting it as portfolio value would double-count
+- **Option positions** (sold puts/calls): `current_value = -(buyback_cost)` — mark-to-market via live Alpaca option quotes. Since premium is already in cash, the position value is the *negative* of what it would cost to buy back the option (it's a liability). This gives accurate P&L: `unrealized_pnl = premium_collected − buyback_cost`. Quotes are fetched in batch once per cycle (~60s) using `get_option_quotes()`. If no quote is available, falls back to `current_value = 0` with premium as P&L.
 
-This means for the Wheel strategy with only open put positions (no assignments yet), Total Value ≈ cash. The cash includes all collected premiums. When puts get assigned and stock positions appear, portfolio value reflects the live stock value.
+**Example with $30,000 initial, 5 sold puts collecting $145 total premium:**
+```
+cash = $30,145 (initial + premiums)
+option positions current_value = -$370 (sum of buyback costs)
+portfolio_value = -$370
+total_value = $30,145 + (-$370) = $29,775
+total_pnl = $29,775 - $30,000 = -$225
+```
+This matches the brokerage mark-to-market view. The **Premium** column on the Positions table shows what was collected; **Value** shows the current liability; **P&L** shows premium minus buyback cost.
 
 **P&L formula:** `total_pnl = (cash + portfolio_value) − initial_capital`
 
