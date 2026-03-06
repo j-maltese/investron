@@ -323,7 +323,7 @@ async def log_activity(
             "event": event_type,
             "ticker": ticker,
             "message": message,
-            "details": json.dumps(details or {}),
+            "details": json.dumps(details or {}, default=str),
         },
     )
     await db.commit()
