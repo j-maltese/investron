@@ -406,6 +406,33 @@ async def get_activity_log(
 
 
 # ---------------------------------------------------------------------------
+# Collateral helpers
+# ---------------------------------------------------------------------------
+
+async def get_put_collateral(db: AsyncSession, strategy_id: str) -> float:
+    """Sum cash-secured collateral for open sold puts (strike × 100 × contracts).
+
+    This is money reserved for potential assignment — it's not a loss, just
+    committed capital.  The circuit breaker adds this back so drawdown
+    reflects real risk, not the collateral set-aside.
+    """
+    result = await db.execute(
+        text("""
+            SELECT COALESCE(SUM(
+                COALESCE(strike_price, 0) * 100 * COALESCE(contracts, 1)
+            ), 0) as total_collateral
+            FROM trading_positions
+            WHERE strategy_id = :sid
+              AND status = 'open'
+              AND wheel_phase = 'selling_puts'
+        """),
+        {"sid": strategy_id},
+    )
+    row = result.mappings().first()
+    return float(row["total_collateral"]) if row else 0
+
+
+# ---------------------------------------------------------------------------
 # Portfolio Aggregation
 # ---------------------------------------------------------------------------
 
@@ -432,13 +459,19 @@ async def get_portfolio_summary(db: AsyncSession) -> dict:
 
 
 async def sync_strategy_pnl(db: AsyncSession, strategy_id: str) -> None:
-    """Recalculate a strategy's P&L from its positions."""
-    # Sum realized P&L from all positions
+    """Recalculate a strategy's portfolio value and P&L from its positions.
+
+    Recomputes current_portfolio_value as the sum of current_value for all
+    open positions, then derives total P&L from cash + portfolio - initial.
+    This ensures the strategy card always reflects live position values
+    rather than stale fill-time snapshots.
+    """
     result = await db.execute(
         text("""
             SELECT
                 COALESCE(SUM(realized_pnl), 0) as total_realized,
-                COALESCE(SUM(CASE WHEN status = 'open' THEN unrealized_pnl ELSE 0 END), 0) as total_unrealized
+                COALESCE(SUM(CASE WHEN status = 'open' THEN unrealized_pnl ELSE 0 END), 0) as total_unrealized,
+                COALESCE(SUM(CASE WHEN status = 'open' THEN current_value ELSE 0 END), 0) as total_current_value
             FROM trading_positions
             WHERE strategy_id = :sid
         """),
@@ -447,6 +480,7 @@ async def sync_strategy_pnl(db: AsyncSession, strategy_id: str) -> None:
     row = result.mappings().first()
     realized = float(row["total_realized"]) if row else 0
     unrealized = float(row["total_unrealized"]) if row else 0
+    portfolio_value = float(row["total_current_value"]) if row else 0
 
     strategy = await get_strategy(db, strategy_id)
     if not strategy:
@@ -454,12 +488,12 @@ async def sync_strategy_pnl(db: AsyncSession, strategy_id: str) -> None:
 
     initial = float(strategy["initial_capital"])
     cash = float(strategy["current_cash"])
-    portfolio_value = float(strategy.get("current_portfolio_value", 0))
     total_pnl = (cash + portfolio_value) - initial
     total_pnl_pct = (total_pnl / initial * 100) if initial > 0 else 0
 
     await update_strategy(
         db, strategy_id,
+        current_portfolio_value=round(portfolio_value, 2),
         realized_pnl=realized,
         unrealized_pnl=unrealized,
         total_pnl=round(total_pnl, 2),

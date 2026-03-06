@@ -175,8 +175,8 @@ Trading Engine (background loop, runs every 60s during market hours)
 | `strategy_type` | VARCHAR(30) | Determines which cycle function to run |
 | `status` | VARCHAR(20) | `stopped`, `running`, `paused`, `error` |
 | `initial_capital` | DECIMAL(12,2) | Starting capital ($500 / $30,000) |
-| `current_cash` | DECIMAL(12,2) | Available cash after open positions |
-| `current_portfolio_value` | DECIMAL(12,2) | Market value of open positions |
+| `current_cash` | DECIMAL(12,2) | Full cash balance (includes collateral for sold puts) |
+| `current_portfolio_value` | DECIMAL(12,2) | Sum of `current_value` from open positions (recomputed each cycle) |
 | `total_pnl` / `total_pnl_pct` | DECIMAL | Overall P&L (absolute and %) |
 | `realized_pnl` / `unrealized_pnl` | DECIMAL | Split P&L |
 | `config` | JSONB | Strategy-specific settings (see below) |
@@ -675,21 +675,41 @@ Updates strategy-level P&L aggregates from position data.
 
 ### Cash Management
 
-| Event | Cash Change |
-|-------|-------------|
-| Sell put fills | +premium (fill × 100) |
-| Put assigned | −(strike × 100) |
-| Sell call fills | +premium (fill × 100) |
-| Call assigned (called away) | +(strike × 100) |
-| Buy-to-close (roll) | −(fill × 100) |
-| Hard stop / efficiency sell | +proceeds |
+| Event | Cash Change | When |
+|-------|-------------|------|
+| Sell put fills | +premium (fill × 100) | Sync detects fill |
+| Put assigned | −(strike × 100) | Assignment detection |
+| Sell call fills | +premium (fill × 100) | Sync detects fill |
+| Call assigned (called away) | +(strike × 100) | Assignment detection |
+| Buy-to-close (roll) | −(fill × 100) | Sync detects fill |
+| Hard stop / efficiency sell | +proceeds (fill × qty) | Sync detects fill |
 
-**Cash reservation:** Before selling a new put, committed cash from existing open puts is subtracted:
+Cash changes for order fills are asynchronous: the order is submitted immediately, but cash is adjusted when `_sync_option_orders` detects the fill from Alpaca (typically next cycle, ~60s). Assignment-related cash changes (put assigned, called away) happen synchronously during `_detect_assignments`.
+
+**Cash reservation (collateral):** Before selling a new put, committed cash from existing open puts is subtracted:
 ```
 committed = sum(strike × 100 × contracts for each open selling_puts position)
 available = current_cash − committed
 ```
-This prevents over-selling puts beyond what the account can cover if all assignments happen simultaneously.
+This prevents over-selling puts beyond what the account can cover if all assignments happen simultaneously. Importantly, collateral is tracked virtually — `current_cash` always reflects the full cash balance (including collateral). The reservation is computed on-the-fly each cycle and only used for position-sizing decisions, not deducted from the stored cash value.
+
+### Portfolio Value Computation
+
+Strategy cards show **Total Value = cash + portfolio_value**. The portfolio value is recomputed each cycle by `sync_strategy_pnl`, which sums `current_value` from all open positions:
+
+**Simple Stock positions:**
+- `current_value = latest_price × quantity` (updated each cycle from Alpaca market data)
+- `unrealized_pnl = (latest_price − entry_price) × quantity`
+
+**Wheel positions:**
+- **Stock positions** (assigned phase): `current_value = latest_price × shares` (updated each cycle)
+- **Option positions** (sold puts/calls): `current_value = 0` — the premium is already credited to `current_cash` on fill, so counting it as portfolio value would double-count
+
+This means for the Wheel strategy with only open put positions (no assignments yet), Total Value ≈ cash. The cash includes all collected premiums. When puts get assigned and stock positions appear, portfolio value reflects the live stock value.
+
+**P&L formula:** `total_pnl = (cash + portfolio_value) − initial_capital`
+
+**Circuit breaker:** Uses the same formula. The `max_loss_pct` (default 20%) triggers a strategy pause when drawdown exceeds the threshold. Because collateral is not deducted from cash and option positions don't double-count premiums, the circuit breaker measures actual economic loss rather than capital set aside for obligations.
 
 ### Position Sizing ($30,000 Capital)
 
