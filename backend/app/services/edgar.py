@@ -7,21 +7,34 @@ from app.utils.rate_limiter import edgar_rate_limiter
 BASE_URL = "https://data.sec.gov"
 EFTS_URL = "https://efts.sec.gov/LATEST"
 
-# Mapping of common XBRL concepts to readable names
+# Mapping of common XBRL concepts to readable names.
+# Companies switch taxonomy concepts over time (e.g. ASC 606 moved many from
+# "Revenues" to "RevenueFromContractWithCustomerExcludingAssessedTax").
+# We list ALL known variants for each field — extract_financial_time_series()
+# merges them, preferring the most recently filed value when periods overlap.
 INCOME_STATEMENT_CONCEPTS = {
+    # Revenue — companies switched en masse around 2018 for ASC 606 adoption
     "Revenues": "revenue",
     "RevenueFromContractWithCustomerExcludingAssessedTax": "revenue",
+    "RevenueFromContractWithCustomerIncludingAssessedTax": "revenue",
     "SalesRevenueNet": "revenue",
+    "SalesRevenueGoodsNet": "revenue",
+    "SalesRevenueServicesNet": "revenue",
+    # Cost of revenue — "CostOfGoodsSold" used pre-2018 by many companies
     "CostOfGoodsAndServicesSold": "cost_of_revenue",
     "CostOfRevenue": "cost_of_revenue",
+    "CostOfGoodsSold": "cost_of_revenue",
     "GrossProfit": "gross_profit",
     "ResearchAndDevelopmentExpense": "rd_expense",
     "SellingGeneralAndAdministrativeExpense": "sga_expense",
     "OperatingIncomeLoss": "operating_income",
+    # Operating expenses — some filers use "CostsAndExpenses" (total) instead
     "OperatingExpenses": "operating_expenses",
+    "CostsAndExpenses": "operating_expenses",
     "InterestExpense": "interest_expense",
     "IncomeTaxExpenseBenefit": "income_tax",
     "NetIncomeLoss": "net_income",
+    "ProfitLoss": "net_income",
     "EarningsPerShareBasic": "eps_basic",
     "EarningsPerShareDiluted": "eps_diluted",
     "WeightedAverageNumberOfShareOutstandingBasicAndDiluted": "shares_outstanding",
@@ -41,20 +54,26 @@ BALANCE_SHEET_CONCEPTS = {
     "AccountsPayableCurrent": "accounts_payable",
     "LongTermDebt": "long_term_debt",
     "LongTermDebtNoncurrent": "long_term_debt",
+    "LongTermDebtAndCapitalLeaseObligations": "long_term_debt",
     "LiabilitiesCurrent": "current_liabilities",
     "Liabilities": "total_liabilities",
     "StockholdersEquity": "stockholders_equity",
+    "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest": "stockholders_equity",
     "RetainedEarningsAccumulatedDeficit": "retained_earnings",
     "LiabilitiesAndStockholdersEquity": "total_liabilities_and_equity",
 }
 
 CASH_FLOW_CONCEPTS = {
     "NetCashProvidedByUsedInOperatingActivities": "operating_cash_flow",
+    "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations": "operating_cash_flow",
     "NetCashProvidedByUsedInInvestingActivities": "investing_cash_flow",
     "NetCashProvidedByUsedInFinancingActivities": "financing_cash_flow",
+    # Capex — AMZN, GE switched from specific PPE to broader "ProductiveAssets"
     "PaymentsToAcquirePropertyPlantAndEquipment": "capex",
+    "PaymentsToAcquireProductiveAssets": "capex",
     "DepreciationDepletionAndAmortization": "depreciation_amortization",
     "PaymentOfDividends": "dividends_paid",
+    "PaymentsOfDividends": "dividends_paid",
     "PaymentsForRepurchaseOfCommonStock": "share_repurchases",
 }
 
@@ -190,6 +209,14 @@ def extract_financial_time_series(
 ) -> dict[str, list[dict]]:
     """Extract time series data from XBRL companyfacts for given concepts.
 
+    Multiple XBRL concepts can map to the same field (e.g. "Revenues" and
+    "RevenueFromContractWithCustomerExcludingAssessedTax" both → "revenue").
+    Companies frequently switch taxonomy concepts across filings — for instance,
+    ASC 606 adoption moved many companies from "Revenues" to the longer variant.
+    We MERGE data from all matching concepts so no periods are lost. When two
+    concepts provide data for the same period, the entry with the later filing
+    date wins (it reflects the most recent disclosure).
+
     Args:
         company_facts: Raw JSON from the companyfacts endpoint.
         concept_mapping: Dict mapping XBRL concept names to readable field names.
@@ -199,18 +226,20 @@ def extract_financial_time_series(
         Dict mapping readable field names to lists of {period, value} dicts.
     """
     us_gaap = company_facts.get("facts", {}).get("us-gaap", {})
-    results: dict[str, list[dict]] = {}
+    # Accumulate entries per field across all matching XBRL concepts.
+    # Key = (field_name, period_end), Value = best entry dict for that period.
+    merged: dict[str, dict[str, dict]] = {}
 
     for xbrl_concept, field_name in concept_mapping.items():
         concept_data = us_gaap.get(xbrl_concept)
         if not concept_data:
             continue
 
+        if field_name not in merged:
+            merged[field_name] = {}
+
         # XBRL data can be in different units (USD, shares, USD/shares for EPS)
         for unit_type, entries in concept_data.get("units", {}).items():
-            series = []
-            seen_periods = set()
-
             for entry in entries:
                 # Filter by form type to get annual (10-K) vs quarterly (10-Q)
                 form = entry.get("form", "")
@@ -220,26 +249,27 @@ def extract_financial_time_series(
                     continue
 
                 period_end = entry.get("end")
-                if not period_end or period_end in seen_periods:
+                if not period_end:
                     continue
 
-                # Skip instant vs duration mismatch for income/cash flow items
-                # (balance sheet items are "instant", income/cash flow are "duration")
-                seen_periods.add(period_end)
-                series.append({
-                    "period": period_end,
-                    "value": entry.get("val"),
-                    "form": form,
-                    "filed": entry.get("filed"),
-                })
+                filed = entry.get("filed", "")
+                existing = merged[field_name].get(period_end)
 
-            if series:
-                # Sort by period date
-                series.sort(key=lambda x: x["period"])
-                # If we already have data for this field (from a different XBRL concept),
-                # keep the one with more data points
-                if field_name not in results or len(series) > len(results[field_name]):
-                    results[field_name] = series
+                # Keep the entry with the later filing date (most recent disclosure).
+                # If no existing entry, or this one was filed more recently, use it.
+                if not existing or filed > existing.get("filed", ""):
+                    merged[field_name][period_end] = {
+                        "period": period_end,
+                        "value": entry.get("val"),
+                        "form": form,
+                        "filed": filed,
+                    }
+
+    # Convert merged dicts into sorted lists
+    results: dict[str, list[dict]] = {}
+    for field_name, period_map in merged.items():
+        if period_map:
+            results[field_name] = sorted(period_map.values(), key=lambda x: x["period"])
 
     return results
 
