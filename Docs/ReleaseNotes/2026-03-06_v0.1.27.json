@@ -1,0 +1,15 @@
+{
+  "version": "0.1.27",
+  "date": "2026-03-06",
+  "title": "v0.1.27",
+  "summary": "Release 0.1.27 includes 1 enhancement.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Filters for ticker on RAG for Trading"
+      ]
+    }
+  ]
+}
