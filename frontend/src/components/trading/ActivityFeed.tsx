@@ -329,7 +329,7 @@ export function ActivityFeed({
       )}
 
       {/* Event list */}
-      <div className="card space-y-0.5 max-h-[600px] overflow-y-auto">
+      <div className="card space-y-0.5 max-h-[calc(100vh-280px)] overflow-y-auto">
         {filteredEvents.map((event) => {
           const iconConfig = getIconConfig(event.event_type)
           const Icon = iconConfig.icon
@@ -367,7 +367,7 @@ export function ActivityFeed({
 
                 {/* Message + metadata */}
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm">{event.message}</div>
+                  <div className="text-sm truncate" title={event.message}>{event.message}</div>
                   <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                     <span className="text-xs text-[var(--muted-foreground)]">
                       {formatDateTime(event.created_at)}

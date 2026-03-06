@@ -296,6 +296,7 @@ export interface TradingPosition {
   opened_at: string
   closed_at?: string
   close_reason?: string
+  company_name?: string
 }
 
 export interface TradingOrder {
@@ -322,6 +323,7 @@ export interface TradingOrder {
   ai_signal?: Record<string, unknown>
   submitted_at: string
   updated_at: string
+  company_name?: string
 }
 
 export interface TradingActivityEvent {
