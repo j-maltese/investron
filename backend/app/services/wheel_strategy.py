@@ -428,7 +428,7 @@ async def _sync_option_orders(db: AsyncSession, strategy_id: str) -> None:
     option-specific cash accounting (premiums are per-share × 100 multiplier).
     """
     orders, _ = await trading_db.get_orders(db, strategy_id, limit=50)
-    pending = [o for o in orders if o["status"] in ("pending", "submitted")]
+    pending = [o for o in orders if o["status"] in ("pending", "pending_new", "submitted", "accepted", "new")]
 
     for order in pending:
         alpaca_id = order.get("alpaca_order_id")

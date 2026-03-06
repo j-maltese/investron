@@ -238,7 +238,7 @@ async def _get_ai_trade_signal(
 async def _sync_pending_orders(db: AsyncSession, strategy_id: str) -> None:
     """Check Alpaca for fills on our pending/submitted orders and update local DB."""
     orders, _ = await trading_db.get_orders(db, strategy_id, limit=50)
-    pending = [o for o in orders if o["status"] in ("pending", "submitted")]
+    pending = [o for o in orders if o["status"] in ("pending", "pending_new", "submitted", "accepted", "new")]
 
     for order in pending:
         alpaca_id = order.get("alpaca_order_id")

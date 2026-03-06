@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { PageLayout } from '@/components/layout/PageLayout'
 import { StrategyCard } from '@/components/trading/StrategyCard'
 import { PortfolioSummary } from '@/components/trading/PortfolioSummary'
 import { PositionsTable } from '@/components/trading/PositionsTable'
 import { OrdersTable } from '@/components/trading/OrdersTable'
 import { ActivityFeed } from '@/components/trading/ActivityFeed'
+import { StrategyFilterPills } from '@/components/trading/StrategyFilterPills'
 import { useStrategies, usePortfolio, usePositions, useOrders, useActivityLog } from '@/hooks/useTrading'
 
 type Tab = 'overview' | 'positions' | 'orders' | 'activity'
@@ -18,6 +19,7 @@ const TABS: { key: Tab; label: string }[] = [
 
 export function Trading() {
   const [activeTab, setActiveTab] = useState<Tab>('overview')
+  const [strategyFilter, setStrategyFilter] = useState<string | null>(null)
 
   const { data: strategiesData, isLoading: strategiesLoading } = useStrategies()
   const { data: portfolio, isLoading: portfolioLoading } = usePortfolio()
@@ -32,12 +34,20 @@ export function Trading() {
   const strategies = ['simple_stock', 'wheel']
     .map(id => strategiesMap.get(id))
     .filter((s): s is NonNullable<typeof s> => s != null)
-  const positions = positionsData?.positions || []
-  const positionsCount = positionsData?.total_count || 0
-  const orders = ordersData?.orders || []
-  const ordersCount = ordersData?.total_count || 0
+  const allPositions = positionsData?.positions || []
+  const allOrders = ordersData?.orders || []
   const recentEvents = activityData?.events || []
   const recentEventsCount = activityData?.total_count || 0
+
+  // Client-side strategy filtering for Positions and Orders tabs
+  const positions = useMemo(
+    () => strategyFilter ? allPositions.filter(p => p.strategy_id === strategyFilter) : allPositions,
+    [allPositions, strategyFilter]
+  )
+  const orders = useMemo(
+    () => strategyFilter ? allOrders.filter(o => o.strategy_id === strategyFilter) : allOrders,
+    [allOrders, strategyFilter]
+  )
 
   return (
     <PageLayout>
@@ -103,11 +113,25 @@ export function Trading() {
           )}
 
           {activeTab === 'positions' && (
-            <PositionsTable positions={positions} totalCount={positionsCount} />
+            <div className="space-y-3">
+              <StrategyFilterPills
+                strategies={strategies}
+                selected={strategyFilter}
+                onChange={setStrategyFilter}
+              />
+              <PositionsTable positions={positions} totalCount={positions.length} />
+            </div>
           )}
 
           {activeTab === 'orders' && (
-            <OrdersTable orders={orders} totalCount={ordersCount} />
+            <div className="space-y-3">
+              <StrategyFilterPills
+                strategies={strategies}
+                selected={strategyFilter}
+                onChange={setStrategyFilter}
+              />
+              <OrdersTable orders={orders} totalCount={orders.length} />
+            </div>
           )}
 
           {activeTab === 'activity' && (

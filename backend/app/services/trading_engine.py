@@ -56,6 +56,24 @@ async def run_trading_cycle() -> None:
     async with _db.async_session_factory() as db:
         strategies = await trading_db.get_all_strategies(db)
 
+    # Sync pending orders for paused strategies — orders can fill on Alpaca
+    # even when we've paused. Without this, cash/positions stay stale until restart.
+    for strategy in strategies:
+        if strategy["status"] != "paused":
+            continue
+        strategy_id = strategy["id"]
+        strategy_type = strategy["strategy_type"]
+        try:
+            async with _db.async_session_factory() as db:
+                if strategy_type == "simple_stock":
+                    from app.services.simple_stock_strategy import _sync_pending_orders
+                    await _sync_pending_orders(db, strategy_id)
+                elif strategy_type == "wheel":
+                    from app.services.wheel_strategy import _sync_option_orders
+                    await _sync_option_orders(db, strategy_id)
+        except Exception as e:
+            logger.warning("Order sync failed for paused strategy %s: %s", strategy_id, e)
+
     for strategy in strategies:
         if strategy["status"] != "running":
             continue

@@ -107,9 +107,16 @@ async def get_positions(
     )
     total = count_result.scalar() or 0
 
-    # Rows
+    # Rows — join screener_scores to get company_name for tooltip display
     result = await db.execute(
-        text(f"SELECT * FROM trading_positions {where_clause} ORDER BY opened_at DESC LIMIT :limit OFFSET :offset"),
+        text(f"""
+            SELECT p.*, ss.company_name
+            FROM trading_positions p
+            LEFT JOIN screener_scores ss ON ss.ticker = p.ticker
+            {where_clause}
+            ORDER BY p.opened_at DESC
+            LIMIT :limit OFFSET :offset
+        """),
         params,
     )
     return [dict(row) for row in result.mappings().all()], total
@@ -293,8 +300,16 @@ async def get_orders(
     )
     total = count_result.scalar() or 0
 
+    # Join screener_scores to get company_name for tooltip display
     result = await db.execute(
-        text(f"SELECT * FROM trading_orders {where_clause} ORDER BY submitted_at DESC LIMIT :limit OFFSET :offset"),
+        text(f"""
+            SELECT o.*, ss.company_name
+            FROM trading_orders o
+            LEFT JOIN screener_scores ss ON ss.ticker = o.ticker
+            {where_clause}
+            ORDER BY o.submitted_at DESC
+            LIMIT :limit OFFSET :offset
+        """),
         params,
     )
     return [dict(row) for row in result.mappings().all()], total
