@@ -364,11 +364,16 @@ async def get_option_chain(
 
             # Greeks may be available via snapshot
             if hasattr(snapshot, "greeks") and snapshot.greeks:
-                contract["delta"] = snapshot.greeks.delta
-                contract["gamma"] = snapshot.greeks.gamma
-                contract["theta"] = snapshot.greeks.theta
-                contract["vega"] = snapshot.greeks.vega
-                contract["implied_volatility"] = snapshot.greeks.implied_volatility
+                g = snapshot.greeks
+                contract["delta"] = getattr(g, "delta", None)
+                contract["gamma"] = getattr(g, "gamma", None)
+                contract["theta"] = getattr(g, "theta", None)
+                contract["vega"] = getattr(g, "vega", None)
+                # Alpaca SDK uses 'implied_volatility' in some versions, 'iv' in others
+                contract["implied_volatility"] = (
+                    getattr(g, "implied_volatility", None)
+                    or getattr(g, "iv", None)
+                )
             results.append(contract)
 
         logger.info("Fetched %d option contracts for %s", len(results), ticker)

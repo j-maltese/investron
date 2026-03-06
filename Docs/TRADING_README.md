@@ -3,7 +3,7 @@
 Investron can automatically trade on your behalf using Alpaca Markets' paper trading API. Two independent strategies run in the background, each with its own capital allocation and trading logic:
 
 1. **Simple Stock Trading** ($500 paper) — AI-powered buy/sell of common stock, leveraging the screener scores and GPT-4o analysis
-2. **The Wheel Strategy** ($5,000 paper) — Mechanical options income strategy: sell cash-secured puts, get assigned stock, sell covered calls, repeat. Full defensive suite with hard stops, rolling puts, adjusted cost basis tracking, and capital efficiency exits
+2. **The Wheel Strategy** ($30,000 paper) — Mechanical options income strategy: sell cash-secured puts, get assigned stock, sell covered calls, repeat. Screener-driven dynamic candidate selection with sector diversification. Full defensive suite with hard stops, rolling puts, adjusted cost basis tracking, and capital efficiency exits
 
 ## How It Works
 
@@ -37,11 +37,13 @@ Trading Engine (background loop, runs every 60s during market hours)
 │          - Execute: market order via Alpaca                   │
 │                                                               │
 │     Wheel:                                                    │
-│       a. Sync option orders with Alpaca (poll for fills)     │
-│       b. Detect assignments (put/call exercises)             │
-│       c. Per symbol: sell puts, manage puts (roll),          │
+│       a. Get candidates from screener (or fixed list)        │
+│       b. Merge open-position tickers (prevent orphaning)     │
+│       c. Sync option orders with Alpaca (poll for fills)     │
+│       d. Detect assignments (put/call exercises)             │
+│       e. Per symbol: sell puts, manage puts (roll),          │
 │          hard stop check, sell calls, manage calls           │
-│       d. Track adjusted cost basis (premiums collected)      │
+│       f. Track adjusted cost basis (premiums collected)      │
 │                                                               │
 │  4. Update last_run timestamp                                 │
 │  5. Sync P&L from position data                               │
@@ -103,7 +105,7 @@ Trading Engine (background loop, runs every 60s during market hours)
 **Decision:** Track positions, orders, and P&L in our own database, syncing with Alpaca each cycle.
 
 **Why local tracking:**
-- Enables per-strategy capital isolation (Alpaca gives one paper account; we allocate $500 vs $5,000 logically)
+- Enables per-strategy capital isolation (Alpaca gives one paper account; we allocate $500 vs $30,000 logically)
 - Stores the AI signal that triggered each trade (audit trail)
 - Tracks wheel phases (selling_puts → assigned → selling_calls) which Alpaca doesn't understand
 - Supports historical P&L and activity logging
@@ -172,7 +174,7 @@ Trading Engine (background loop, runs every 60s during market hours)
 | `display_name` | VARCHAR(100) | Human-readable name |
 | `strategy_type` | VARCHAR(30) | Determines which cycle function to run |
 | `status` | VARCHAR(20) | `stopped`, `running`, `paused`, `error` |
-| `initial_capital` | DECIMAL(12,2) | Starting capital ($500 / $5,000) |
+| `initial_capital` | DECIMAL(12,2) | Starting capital ($500 / $30,000) |
 | `current_cash` | DECIMAL(12,2) | Available cash after open positions |
 | `current_portfolio_value` | DECIMAL(12,2) | Market value of open positions |
 | `total_pnl` / `total_pnl_pct` | DECIMAL | Overall P&L (absolute and %) |
@@ -245,7 +247,13 @@ Trading Engine (background loop, runs every 60s during market hours)
 **Wheel:**
 ```json
 {
-    "symbol_list": ["F", "SOFI", "INTC", "PLTR", "BAC", "AMD"],
+    "screener_enabled": true,
+    "screener_min_score": 40.0,
+    "screener_max_price": 200.0,
+    "screener_min_market_cap": 1000000000,
+    "screener_top_n": 20,
+    "max_per_sector": 2,
+    "symbol_list": [],
     "delta_min": 0.15,
     "delta_max": 0.30,
     "yield_min": 0.04,
@@ -265,7 +273,13 @@ Trading Engine (background loop, runs every 60s during market hours)
 
 | Key | Default | Purpose |
 |-----|---------|---------|
-| `symbol_list` | 6 tickers | Affordable stocks with good options liquidity |
+| `screener_enabled` | `true` | Use screener-driven dynamic candidates (vs legacy fixed list) |
+| `screener_min_score` | 40.0 | Minimum composite score to qualify as a Wheel candidate |
+| `screener_max_price` | $200 | Max stock price (assignment must be affordable) |
+| `screener_min_market_cap` | $1B | Minimum market cap for options liquidity |
+| `screener_top_n` | 20 | Max candidates to evaluate per cycle |
+| `max_per_sector` | 2 | Sector diversification limit |
+| `symbol_list` | `[]` | Legacy fixed ticker list (used when `screener_enabled=false`) |
 | `delta_min` / `delta_max` | 0.15-0.30 | Target delta range for sold options (probability of assignment) |
 | `yield_min` / `yield_max` | 4%-100% | Annualized premium yield filter |
 | `expiration_min_days` / `expiration_max_days` | 7-45 | DTE window for option selection |
@@ -497,7 +511,7 @@ This reinitializes the database from `schema.sql`, which seeds both strategy row
 bash scripts/dev.sh
 ```
 
-Navigate to `/trading` — you should see both strategy cards with $500 and $5,000 starting capital.
+Navigate to `/trading` — you should see both strategy cards with $500 and $30,000 starting capital.
 
 ### 5. Start a strategy
 
@@ -593,7 +607,7 @@ IDLE ──sell put──→ SELLING_PUTS ──assigned──→ ASSIGNED ─�
 
 ### Each Cycle (`run_wheel_cycle`)
 
-Called every ~60s by the trading engine during market hours. Processes all symbols in `config.symbol_list`, sorted by stock price ascending (cheapest first for affordability gating).
+Called every ~60s by the trading engine during market hours. In screener mode (default), candidates are pulled dynamically from `screener_scores` — filtered by min composite score, max price, min market cap, and sector diversification. Tickers with open positions are always included even if they fall off the screener. In legacy mode (`screener_enabled=false`), processes `config.symbol_list`. Candidates are sorted by stock price ascending (cheapest first for affordability gating).
 
 **Step 1: Sync Option Orders**
 
@@ -677,13 +691,9 @@ available = current_cash − committed
 ```
 This prevents over-selling puts beyond what the account can cover if all assignments happen simultaneously.
 
-### Position Sizing ($5,000 Capital)
+### Position Sizing ($30,000 Capital)
 
-Tickers are sorted by price ascending. At current prices (~March 2026):
-- **F** (~$10), **SOFI** (~$14): $1,000-1,400 per assignment — multiple positions possible
-- **INTC** (~$22): $2,200 — affordable one at a time
-- **BAC** (~$40): $4,000 — tight, blocks most other positions
-- **PLTR** (~$100), **AMD** (~$115): Too expensive — naturally skipped, logged as `blocked_too_expensive`
+With $30,000 and screener-driven candidates (max price $200), the Wheel can run multiple concurrent positions across sectors. Tickers are sorted by price ascending — cheapest first to maximize the number of simultaneous positions. Assignment cost = strike × 100, so a $50 stock ties up ~$5,000. The `max_per_sector` constraint (default 2) prevents concentration in a single sector. Tickers where assignment cost exceeds available cash are logged as `blocked_insufficient_cash` and skipped.
 
 ### Activity Log Event Types
 
