@@ -27,11 +27,11 @@ export function Trading() {
   // section. The full Activity tab manages its own data fetching internally.
   const { data: activityData } = useActivityLog({ limit: 5 })
 
-  // Fixed order: Simple Stock first, Wheel second (don't re-sort by status)
-  const STRATEGY_ORDER = ['simple_stock', 'wheel'] as const
-  const strategies = [...(strategiesData?.strategies || [])].sort(
-    (a, b) => STRATEGY_ORDER.indexOf(a.id as typeof STRATEGY_ORDER[number]) - STRATEGY_ORDER.indexOf(b.id as typeof STRATEGY_ORDER[number])
-  )
+  // Fixed display order — lookup by ID so position never changes with status
+  const strategiesMap = new Map((strategiesData?.strategies || []).map(s => [s.id, s]))
+  const strategies = ['simple_stock', 'wheel']
+    .map(id => strategiesMap.get(id))
+    .filter((s): s is NonNullable<typeof s> => s != null)
   const positions = positionsData?.positions || []
   const positionsCount = positionsData?.total_count || 0
   const orders = ordersData?.orders || []
