@@ -1,0 +1,27 @@
+{
+  "version": "0.1.24",
+  "date": "2026-03-05",
+  "title": "Wheel Screener Candidates and Filing Refresh",
+  "summary": "Release 0.1.24 includes 4 new features, 3 enhancements.",
+  "sections": [
+    {
+      "type": "new_feature",
+      "label": "New Features",
+      "items": [
+        "Wheel strategy now uses screener-driven dynamic candidate selection instead of hardcoded ticker list",
+        "Sector diversification constraint (max 2 positions per sector) for Wheel candidates",
+        "Refresh Filings button on Filings tab \u2014 re-fetch filing list from EDGAR without triggering RAG indexing",
+        "Index for AI button on Filings tab \u2014 trigger RAG embedding pipeline on demand"
+      ]
+    },
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Wheel strategy capital bumped from $5,000 to $30,000 (paper money) for broader position coverage",
+        "Strategy card shows screener mode description when screener_enabled, falls back to fixed ticker list for legacy mode",
+        "Open-position tickers are always included in Wheel candidates to prevent position orphaning"
+      ]
+    }
+  ]
+}

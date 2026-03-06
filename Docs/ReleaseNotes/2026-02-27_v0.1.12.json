@@ -1,0 +1,15 @@
+{
+  "version": "0.1.12",
+  "date": "2026-02-27",
+  "title": "AI Auth Fix",
+  "summary": "Release 0.1.12 includes 1 bug fix.",
+  "sections": [
+    {
+      "type": "bug_fix",
+      "label": "Bug Fixes",
+      "items": [
+        "Fix 401 auth error on AI Analysis chat endpoint \u2014 service was not passing JWT correctly"
+      ]
+    }
+  ]
+}

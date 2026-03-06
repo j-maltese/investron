@@ -1,0 +1,30 @@
+{
+  "version": "0.1.10",
+  "date": "2026-02-26",
+  "title": "Infinite Scroll and Local Dev",
+  "summary": "Release 0.1.10 includes 1 new feature, 2 enhancements, 1 bug fix.",
+  "sections": [
+    {
+      "type": "new_feature",
+      "label": "New Features",
+      "items": [
+        "Local development environment with Docker Postgres, dev scripts, and seed data"
+      ]
+    },
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "IntersectionObserver infinite scroll on Value Screener with keepPreviousData for smooth loading",
+        "Frozen column headers for Value Screener scrolling"
+      ]
+    },
+    {
+      "type": "bug_fix",
+      "label": "Bug Fixes",
+      "items": [
+        "Fixed tooltip positioning issue on Value Screener columns"
+      ]
+    }
+  ]
+}

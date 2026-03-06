@@ -1,0 +1,25 @@
+{
+  "version": "0.1.18",
+  "date": "2026-03-04",
+  "title": "Scanner Resilience and Error Handling",
+  "summary": "Release 0.1.18 includes 3 enhancements, 2 bug fixes.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "yfinance retry logic with exponential backoff and error handling for flaky API responses",
+        "Timezone-aware scanner scheduling (daily at 5 PM ET)",
+        "Improved date formatting across the application"
+      ]
+    },
+    {
+      "type": "bug_fix",
+      "label": "Bug Fixes",
+      "items": [
+        "Fix null safety crashes on research page components when data is missing",
+        "Updated trading documentation with full Wheel strategy details"
+      ]
+    }
+  ]
+}

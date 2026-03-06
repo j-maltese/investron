@@ -1,0 +1,17 @@
+{
+  "version": "0.1.15",
+  "date": "2026-03-01",
+  "title": "AI Enhancements and UX Polish",
+  "summary": "Release 0.1.15 includes 3 enhancements.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "AI system prompt now includes current_date variable for time-aware responses",
+        "Modern thin scrollbars (6px) with CSS variable theming \u2014 replaces default browser chrome",
+        "Updated User Guide with AI Analysis documentation and improved section numbering"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "version": "0.1.6",
+  "date": "2026-02-26",
+  "title": "Railway Logging",
+  "summary": "Release 0.1.6 includes 1 bug fix.",
+  "sections": [
+    {
+      "type": "bug_fix",
+      "label": "Bug Fixes",
+      "items": [
+        "Configure root logger so app log messages appear in Railway deployment logs"
+      ]
+    }
+  ]
+}
