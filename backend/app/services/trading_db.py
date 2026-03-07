@@ -401,19 +401,22 @@ async def get_activity_log(
             params["etype"] = event_type
 
     if date_from:
-        # Use CAST() instead of :: to avoid SQLAlchemy interpreting
-        # :date_from::timestamptz as two named parameters
-        where_parts.append("created_at >= CAST(:date_from AS TIMESTAMPTZ)")
-        params["date_from"] = date_from
+        # asyncpg requires native datetime objects — it validates types before
+        # sending to PostgreSQL, so CAST() in SQL doesn't help.
+        where_parts.append("created_at >= :date_from")
+        params["date_from"] = datetime.fromisoformat(date_from)
 
     if date_to:
         # ISO datetime strings (contain 'T') use exact comparison;
-        # plain date strings get end-of-day inclusion for backward compat.
+        # plain date strings get end-of-day treatment for user convenience.
         if 'T' in date_to:
-            where_parts.append("created_at <= CAST(:date_to AS TIMESTAMPTZ)")
+            where_parts.append("created_at <= :date_to")
+            params["date_to"] = datetime.fromisoformat(date_to)
         else:
-            where_parts.append("created_at < CAST(:date_to AS DATE) + interval '1 day'")
-        params["date_to"] = date_to
+            # Plain date like "2026-03-06" → include the whole day
+            end_of_day = datetime.fromisoformat(date_to + "T23:59:59+00:00")
+            where_parts.append("created_at <= :date_to")
+            params["date_to"] = end_of_day
 
     if search:
         # Search across message, ticker, and event_type columns
