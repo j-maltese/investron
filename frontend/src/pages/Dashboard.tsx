@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, Trash2, AlertTriangle, ExternalLink } from 'lucide-react'
 import { PageLayout } from '@/components/layout/PageLayout'
-import { useWatchlist, useAlerts, useAddToWatchlist, useRemoveFromWatchlist } from '@/hooks/useWatchlist'
+import { useWatchlist, useAlerts, useAddToWatchlist, useRemoveFromWatchlist, useUpdateWatchlistItem } from '@/hooks/useWatchlist'
 import { ValueScreener } from '@/components/dashboard/ValueScreener'
 import { TickerAutocomplete } from '@/components/search/TickerAutocomplete'
 
@@ -16,9 +16,40 @@ export function Dashboard() {
   const { data: alertsData } = useAlerts()
   const addMutation = useAddToWatchlist()
   const removeMutation = useRemoveFromWatchlist()
+  const updateMutation = useUpdateWatchlistItem()
 
   const [newTicker, setNewTicker] = useState('')
   const [newTarget, setNewTarget] = useState('')
+
+  // Inline editing state: tracks which cell is being edited
+  const [editingCell, setEditingCell] = useState<{ ticker: string; field: 'target_price' | 'notes' } | null>(null)
+  const [editValue, setEditValue] = useState('')
+  const editRef = useRef<HTMLInputElement>(null)
+
+  // Auto-focus the input when editing starts
+  useEffect(() => {
+    if (editingCell && editRef.current) {
+      editRef.current.focus()
+      editRef.current.select()
+    }
+  }, [editingCell])
+
+  const startEditing = (ticker: string, field: 'target_price' | 'notes', currentValue: string) => {
+    setEditingCell({ ticker, field })
+    setEditValue(currentValue)
+  }
+
+  const saveEdit = () => {
+    if (!editingCell) return
+    const { ticker, field } = editingCell
+    const update = field === 'target_price'
+      ? { target_price: editValue ? parseFloat(editValue) : undefined }
+      : { notes: editValue || undefined }
+    updateMutation.mutate({ ticker, update })
+    setEditingCell(null)
+  }
+
+  const cancelEdit = () => setEditingCell(null)
 
   const handleAdd = () => {
     if (!newTicker.trim()) return
@@ -125,10 +156,54 @@ export function Dashboard() {
                         {formatCurrency(item.current_price)}
                       </td>
                       <td className="py-2.5 px-2 text-right font-mono text-[var(--muted-foreground)]">
-                        {item.target_price ? formatCurrency(item.target_price) : '-'}
+                        {editingCell?.ticker === item.ticker && editingCell.field === 'target_price' ? (
+                          <input
+                            ref={editRef}
+                            type="number"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onBlur={saveEdit}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') saveEdit()
+                              if (e.key === 'Escape') cancelEdit()
+                            }}
+                            className="input w-24 text-sm text-right font-mono py-0.5 px-1"
+                            step="0.01"
+                          />
+                        ) : (
+                          <span
+                            className="cursor-pointer hover:text-[var(--accent)] transition-colors"
+                            onClick={() => startEditing(item.ticker, 'target_price', item.target_price?.toString() ?? '')}
+                            title="Click to edit target price"
+                          >
+                            {item.target_price ? formatCurrency(item.target_price) : '-'}
+                          </span>
+                        )}
                       </td>
-                      <td className="py-2.5 px-2 text-[var(--muted-foreground)] max-w-xs truncate">
-                        {item.notes || '-'}
+                      <td className="py-2.5 px-2 text-[var(--muted-foreground)] max-w-xs">
+                        {editingCell?.ticker === item.ticker && editingCell.field === 'notes' ? (
+                          <input
+                            ref={editRef}
+                            type="text"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onBlur={saveEdit}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') saveEdit()
+                              if (e.key === 'Escape') cancelEdit()
+                            }}
+                            className="input w-full text-sm py-0.5 px-1"
+                            placeholder="Add a note..."
+                          />
+                        ) : (
+                          <span
+                            className="cursor-pointer hover:text-[var(--accent)] transition-colors truncate block"
+                            onClick={() => startEditing(item.ticker, 'notes', item.notes ?? '')}
+                            title="Click to edit notes"
+                          >
+                            {item.notes || '-'}
+                          </span>
+                        )}
                       </td>
                       <td className="py-2.5 px-2 text-right">
                         <div className="flex items-center justify-end gap-1">
