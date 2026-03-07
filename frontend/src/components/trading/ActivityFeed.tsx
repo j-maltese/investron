@@ -85,27 +85,37 @@ function getIconConfig(eventType: string) {
 // that don't share a common prefix (except "blocked_*").
 // ---------------------------------------------------------------------------
 
-type FilterCategory = 'all' | 'decisions' | 'executions' | 'blocked' | 'errors'
+type FilterCategory = 'all' | 'decisions' | 'orders' | 'lifecycle' | 'blocked' | 'errors'
 
-const FILTER_PILLS: { key: FilterCategory; label: string }[] = [
+// Pills are split into two visual groups separated by a divider:
+// "what happened" (left) vs "what went wrong" (right)
+const FILTER_PILLS_LEFT: { key: FilterCategory; label: string }[] = [
   { key: 'all',        label: 'All' },
   { key: 'decisions',  label: 'Decisions' },
-  { key: 'executions', label: 'Executions' },
+  { key: 'orders',     label: 'Orders' },
+  { key: 'lifecycle',  label: 'Lifecycle' },
+]
+
+const FILTER_PILLS_RIGHT: { key: FilterCategory; label: string }[] = [
   { key: 'blocked',    label: 'Blocked' },
   { key: 'errors',     label: 'Errors' },
 ]
 
-// Decision events: explain WHY something was done (scoring, reasoning, analysis)
+// Decision events: AI reasoning, analysis, scoring — "what did the system conclude?"
 const DECISION_TYPES = new Set([
-  'option_selected', 'put_sold', 'call_sold', 'roll_executed',
-  'hard_stop', 'capital_efficiency_exit',
+  'signal', 'option_selected', 'auto_index',
 ])
 
-// Execution events: factual triggers — something happened, here's what and when
-const EXECUTION_TYPES = new Set([
-  'order_placed', 'order_filled', 'assignment', 'called_away',
-  'option_expired', 'phase_transition', 'roll_attempted',
-  'strategy_start', 'strategy_stop', 'strategy_reset', 'config_update', 'signal',
+// Order events: actual Alpaca brokerage actions — "when did money move?"
+const ORDER_TYPES = new Set([
+  'order_placed', 'order_filled', 'put_sold', 'call_sold',
+  'roll_executed', 'roll_attempted', 'hard_stop', 'capital_efficiency_exit',
+])
+
+// Lifecycle events: state changes — "what changed in position/strategy state?"
+const LIFECYCLE_TYPES = new Set([
+  'assignment', 'called_away', 'option_expired', 'phase_transition',
+  'strategy_start', 'strategy_stop', 'strategy_reset', 'config_update',
 ])
 
 // Error events: failures and safety triggers
@@ -114,7 +124,8 @@ const ERROR_TYPES = new Set(['error', 'circuit_breaker'])
 function matchesFilter(eventType: string, filter: FilterCategory): boolean {
   if (filter === 'all') return true
   if (filter === 'decisions') return DECISION_TYPES.has(eventType)
-  if (filter === 'executions') return EXECUTION_TYPES.has(eventType)
+  if (filter === 'orders') return ORDER_TYPES.has(eventType)
+  if (filter === 'lifecycle') return LIFECYCLE_TYPES.has(eventType)
   if (filter === 'blocked') return eventType.startsWith('blocked_')
   if (filter === 'errors') return ERROR_TYPES.has(eventType)
   return true
@@ -374,7 +385,7 @@ export function ActivityFeed({
         <div className="card text-center py-8 text-[var(--muted-foreground)]">
           No activity
           {filter !== 'all'
-            ? ` matching "${FILTER_PILLS.find((p) => p.key === filter)?.label}"`
+            ? ` matching "${[...FILTER_PILLS_LEFT, ...FILTER_PILLS_RIGHT].find((p) => p.key === filter)?.label}"`
             : ''}
           {committedDateFrom ? ` from ${committedDateFrom.toLocaleString()}` : ''}
           {committedDateTo ? ` to ${committedDateTo.toLocaleString()}` : ''}
@@ -516,21 +527,25 @@ function FilterBar({
   filter: FilterCategory
   setFilter: (f: FilterCategory) => void
 }) {
+  const renderPill = ({ key, label }: { key: FilterCategory; label: string }) => (
+    <button
+      key={key}
+      onClick={() => setFilter(key)}
+      className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+        filter === key
+          ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
+          : 'border-[var(--border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:border-[var(--foreground)]'
+      }`}
+    >
+      {label}
+    </button>
+  )
+
   return (
-    <div className="flex gap-1.5 flex-wrap">
-      {FILTER_PILLS.map(({ key, label }) => (
-        <button
-          key={key}
-          onClick={() => setFilter(key)}
-          className={`px-3 py-1 text-xs rounded-full border transition-colors ${
-            filter === key
-              ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
-              : 'border-[var(--border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:border-[var(--foreground)]'
-          }`}
-        >
-          {label}
-        </button>
-      ))}
+    <div className="flex gap-1.5 flex-wrap items-center">
+      {FILTER_PILLS_LEFT.map(renderPill)}
+      <span className="text-[var(--border)] mx-0.5">|</span>
+      {FILTER_PILLS_RIGHT.map(renderPill)}
     </div>
   )
 }
