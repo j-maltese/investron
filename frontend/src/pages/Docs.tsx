@@ -377,9 +377,10 @@ function UserGuide() {
               for a buy/hold/sell signal with confidence rating. The AI receives full financial statements and,
               when available, relevant excerpts from SEC filings (risk factors, MD&A, guidance) for deeper analysis.
               Only high-conviction signals are executed.</li>
-            <li><strong>The Wheel Strategy ($5,000)</strong> — A mechanical options income strategy: sell cash-secured puts
-              on affordable stocks, get assigned if the put expires in-the-money, then sell covered calls until the
-              stock is called away. Repeats for steady premium income. Includes defensive features like hard stops,
+            <li><strong>The Wheel Strategy ($30,000)</strong> — A mechanical options income strategy: sell cash-secured puts
+              on screener-selected stocks, get assigned if the put expires in-the-money, then sell covered calls until the
+              stock is called away. Candidates are dynamically chosen from the screener by composite score, price, market cap,
+              and sector diversification. Includes defensive features like hard stops,
               rolling puts, and adjusted cost basis tracking. See the <strong>Wheel Strategy Guide</strong> tab for
               a detailed explanation.</li>
           </ul>
@@ -410,11 +411,12 @@ function UserGuide() {
           <p>Each cycle (approximately every 30 minutes during market hours):</p>
           <ol className="list-decimal pl-5 space-y-1">
             <li><strong>Sync orders</strong> — Checks Alpaca for fills on pending orders and updates local records.</li>
-            <li><strong>Check sells</strong> — For each open position: triggers stop-loss if price dropped &gt;10% from entry,
-              take-profit if price rose &gt;20%, or asks GPT-4o whether to sell.</li>
+            <li><strong>Check sells</strong> — For each open position: triggers stop-loss if price dropped &gt;10% from entry
+              (with 3-layer confirmation and stop-limit order), take-profit if price rose &gt;20% (with limit order),
+              or asks GPT-4o whether to sell. All sell triggers pass execution safety checks before executing.</li>
             <li><strong>Find buys</strong> — Pulls the top 20 stocks from the screener by composite score.
               Filters by minimum score (60+), then asks GPT-4o for a buy signal (max 5 AI calls per cycle to control costs).
-              High-confidence buys are executed as market orders, sized at up to 25% of strategy capital per position.</li>
+              High-conviction buys are executed as limit orders, sized at up to 25% of strategy capital per position.</li>
           </ol>
         </SubSection>
         <SubSection title="Automatic filing research">
@@ -430,7 +432,10 @@ function UserGuide() {
           <ul className="list-disc pl-5 space-y-1">
             <li><strong>Circuit breaker</strong> — Automatically pauses the strategy if total drawdown exceeds 20% of initial capital.</li>
             <li><strong>Position limits</strong> — No single position can exceed 25% of capital.</li>
-            <li><strong>Stop-loss / take-profit</strong> — Automatic sell triggers at -10% and +20%.</li>
+            <li><strong>Stop-loss / take-profit</strong> — Automatic sell triggers at -10% and +20%, with multi-layer confirmation before executing.</li>
+            <li><strong>Independent price confirmation</strong> — Stop-loss and take-profit triggers cross-check Alpaca prices against yfinance. If the two sources disagree by more than 5%, the trade is blocked (prevents false triggers from bad data).</li>
+            <li><strong>Spread &amp; staleness checks</strong> — Blocks all trades when bid/ask spread exceeds 2% (illiquid) or the last trade price is more than 5 minutes old during market hours (stale data).</li>
+            <li><strong>Limit orders only</strong> — No market orders. Buys use limit orders with a small buffer, sells use limit or stop-limit orders for controlled execution.</li>
             <li><strong>Market hours only</strong> — The engine only runs during US market hours to avoid stale quotes.</li>
             <li><strong>AI cost cap</strong> — Max 5 GPT-4o calls per cycle keeps API costs predictable (~$0.40-1.20/day).</li>
             <li><strong>Master kill switch</strong> — <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">TRADING_ENABLED=false</code> prevents the engine from starting entirely.</li>
@@ -439,7 +444,7 @@ function UserGuide() {
         <SubSection title="Important notes">
           <ul className="list-disc pl-5 space-y-1">
             <li>This is <strong>paper trading only</strong> — no real money is involved. All trades execute against Alpaca's simulated market.</li>
-            <li>The two strategies share one Alpaca paper account but track capital independently in the database ($500 vs $5,000).</li>
+            <li>The two strategies share one Alpaca paper account but track capital independently in the database ($500 vs $30,000).</li>
             <li>AI trade signals are logged on every order for full audit trail — see the Order History tab for the reasoning behind each trade.</li>
             <li>The AI is for experimentation, not financial advice. Past simulated performance does not predict future results.</li>
           </ul>
@@ -646,8 +651,10 @@ function WheelGuide() {
 
       <Section title="3. How Investron Runs the Wheel">
         <p>
-          Every ~60 seconds during market hours, the trading engine runs a cycle for each symbol in the
-          Wheel's <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">symbol_list</code> configuration. Here's what happens at each phase:
+          Every ~60 seconds during market hours, the trading engine runs a cycle for each candidate symbol.
+          By default, candidates are pulled dynamically from the screener — filtered by composite score, max price,
+          min market cap, and sector diversification limits. Tickers with open positions are always included even if
+          they fall off the screener. Here's what happens at each phase:
         </p>
         <SubSection title="Phase 1: Selling puts (IDLE → SELLING_PUTS)">
           <p>For each symbol with no open position:</p>
@@ -789,6 +796,14 @@ Break-even is $20.10, not $22.00`}
         </SubSection>
         <SubSection title="Blocked (what the program wanted to do but couldn't)">
           <p>These are particularly important for understanding system constraints:</p>
+          <p className="mt-2 mb-1 font-medium text-sm">Simple Stock:</p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>blocked_stop_loss</strong> / <strong>blocked_stop_loss_price_mismatch</strong> — Stop-loss not confirmed on re-fetch, or Alpaca vs yfinance price divergence exceeded 5%.</li>
+            <li><strong>blocked_take_profit_price_mismatch</strong> — Take-profit blocked due to price source disagreement.</li>
+            <li><strong>blocked_stale_price</strong> — Last trade was too old during market hours (stale data).</li>
+            <li><strong>blocked_wide_spread</strong> — Bid/ask spread exceeded 2%, indicating illiquidity or bad data.</li>
+          </ul>
+          <p className="mt-2 mb-1 font-medium text-sm">Wheel:</p>
           <ul className="list-disc pl-5 space-y-1">
             <li><strong>blocked_insufficient_cash</strong> — Wanted to sell a put but can't afford assignment. Shows how much was needed vs. available.</li>
             <li><strong>blocked_too_expensive</strong> — Ticker's 100 shares exceed total strategy capital.</li>
@@ -813,12 +828,16 @@ Break-even is $20.10, not $22.00`}
           The Wheel's behavior is controlled by its JSONB config, which can be edited from the strategy card
           on the Trading page (gear icon → edit config). All values are tunable without code changes.
         </p>
-        <SubSection title="Symbol selection">
+        <SubSection title="Candidate selection">
           <p>
-            <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">symbol_list</code> — The tickers the Wheel trades. Default:{' '}
-            <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">["F", "SOFI", "INTC", "PLTR", "BAC", "AMD"]</code>.
-            Choose stocks you'd be willing to own at the put strike price. Tickers are sorted by price ascending
-            each cycle — cheaper stocks get capital first since assignment costs less.
+            By default, the Wheel dynamically selects candidates from the screener each cycle. Stocks are filtered
+            by minimum composite score (<code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">screener_min_score</code>, default 40),
+            max price (<code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">screener_max_price</code>, default $200),
+            min market cap (<code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">screener_min_market_cap</code>, default $1B),
+            and sector diversification (<code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">max_per_sector</code>, default 2).
+            Tickers are sorted by price ascending — cheaper stocks get capital first since assignment costs less.
+            You can also set <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">screener_enabled: false</code> and
+            provide a fixed <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">symbol_list</code> instead.
           </p>
         </SubSection>
         <SubSection title="Option selection parameters">
@@ -850,18 +869,22 @@ Break-even is $20.10, not $22.00`}
             and the strategy moves on.
           </p>
         </SubSection>
-        <SubSection title="Can I add or remove tickers?">
+        <SubSection title="How does the Wheel choose which stocks to trade?">
           <p>
-            Yes — edit the <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">symbol_list</code> in the strategy config.
-            New tickers will be picked up on the next cycle. Removed tickers with open positions will be monitored
-            until those positions close but won't open new ones.
+            By default, the Wheel pulls candidates dynamically from the screener each cycle — filtered by composite
+            score (40+), max price ($200), min market cap ($1B), and sector diversification (max 2 per sector).
+            This means the Wheel automatically adapts as stock prices and fundamentals change. You can also disable
+            the screener and provide a fixed <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">symbol_list</code> in
+            the strategy config if you prefer manual control. Tickers with open positions are always monitored even
+            if they fall off the screener.
           </p>
         </SubSection>
-        <SubSection title="Why are PLTR and AMD in the list if they're too expensive?">
+        <SubSection title="What if a ticker is too expensive?">
           <p>
-            The strategy automatically skips tickers it can't afford (logged as <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">blocked_too_expensive</code>).
-            They're in the list so that if capital grows large enough (or if prices drop), they become eligible.
-            No manual intervention needed.
+            The strategy automatically skips tickers it can't afford to be assigned on (logged as{' '}
+            <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">blocked_too_expensive</code> or{' '}
+            <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">blocked_insufficient_cash</code>).
+            If capital grows large enough or prices drop, they become eligible automatically. No manual intervention needed.
           </p>
         </SubSection>
         <SubSection title="What does 'rolling' actually do?">

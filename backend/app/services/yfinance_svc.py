@@ -187,3 +187,32 @@ async def get_insider_transactions(ticker: str) -> list[dict]:
     return await loop.run_in_executor(
         None, partial(_retry_sync, _get_insider_transactions_sync, ticker)
     )
+
+
+def _get_quick_price_sync(ticker: str) -> float | None:
+    """Fetch just the current price via yfinance fast_info — much lighter than full info.
+
+    Used as an independent price confirmation source for trade safety checks.
+    Returns the last price, or None if unavailable.
+    Raises on network errors so _retry_sync can retry.
+    """
+    stock = _ticker(ticker)
+    fi = stock.fast_info
+    # fast_info.last_price is the most recent trade price
+    price = getattr(fi, "last_price", None)
+    if price is None or price <= 0:
+        return None
+    return float(price)
+
+
+async def get_quick_price(ticker: str) -> float | None:
+    """Get current price from yfinance as an independent confirmation source.
+
+    Lightweight — uses fast_info instead of full info dict.
+    Rate-limited to avoid yfinance throttling.
+    """
+    await yfinance_rate_limiter.acquire()
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, partial(_retry_sync, _get_quick_price_sync, ticker)
+    )

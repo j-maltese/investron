@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     trading_rag_max_tokens: int = 2000   # Max filing context tokens per trade signal prompt
     trading_rag_enabled: bool = True     # Kill switch for RAG without disabling trading
 
+    # Layer 1: Execution Safety — prevents bad fills and false-trigger sells
+    price_confirm_divergence_pct: float = 5.0  # Max % divergence between Alpaca & yfinance before blocking
+    spread_max_pct: float = 2.0               # Block trades when bid/ask spread > this % (illiquid/bad data)
+    price_staleness_max_seconds: int = 300    # Reject prices with last trade > this many seconds old (market hours)
+    buy_limit_offset_pct: float = 0.5         # Buy limit price = current price * (1 + this%) — small buffer above
+    stop_loss_limit_offset_pct: float = 2.0   # Stop-limit sell: limit offset below stop trigger (e.g. stop -10%, limit -12%)
+
     # Value Screener background scanner settings
     # All configurable via env vars (e.g. SCANNER_ENABLED=false for local dev)
     scanner_enabled: bool = True          # Set False to disable background scanning
