@@ -1,0 +1,16 @@
+{
+  "version": "0.1.35",
+  "date": "2026-03-07",
+  "title": "v0.1.35",
+  "summary": "Release 0.1.35 includes 2 enhancements.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Improves Activity Log (feed)",
+        "Trading updates to logging and reporting"
+      ]
+    }
+  ]
+}
