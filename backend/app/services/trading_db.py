@@ -348,6 +348,7 @@ async def get_activity_log(
     db: AsyncSession,
     strategy_id: str | None = None,
     event_type: str | None = None,
+    event_types: list[str] | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
     search: str | None = None,
@@ -358,8 +359,9 @@ async def get_activity_log(
 
     Supports filtering by:
       - strategy_id: single strategy
-      - event_type: exact match (e.g., 'order_filled') or prefix match for
-        category filters (e.g., 'blocked' matches all blocked_* events)
+      - event_type: single type — exact or prefix match (legacy)
+      - event_types: list of exact types + optional 'blocked_*' prefix matching.
+        Used by the frontend category pills to do server-side filtering.
       - date_from / date_to: ISO date strings for date range filtering
       - search: case-insensitive substring match on message, ticker, or event_type
     """
@@ -370,9 +372,27 @@ async def get_activity_log(
         where_parts.append("strategy_id = :sid")
         params["sid"] = strategy_id
 
-    if event_type:
-        # Support prefix matching: "blocked" matches "blocked_insufficient_cash", etc.
-        # This enables the frontend's category filter pills.
+    if event_types:
+        # Server-side category filter — supports a list of exact types plus
+        # a special 'blocked_*' wildcard for the Blocked category.
+        has_blocked_prefix = any(t == "blocked_*" for t in event_types)
+        exact_types = [t for t in event_types if t != "blocked_*"]
+
+        if has_blocked_prefix and exact_types:
+            # Combine IN clause with LIKE prefix match via OR
+            placeholders = ", ".join(f":et_{i}" for i in range(len(exact_types)))
+            where_parts.append(f"(event_type IN ({placeholders}) OR event_type LIKE 'blocked_%')")
+            for i, t in enumerate(exact_types):
+                params[f"et_{i}"] = t
+        elif has_blocked_prefix:
+            where_parts.append("event_type LIKE 'blocked_%'")
+        elif exact_types:
+            placeholders = ", ".join(f":et_{i}" for i in range(len(exact_types)))
+            where_parts.append(f"event_type IN ({placeholders})")
+            for i, t in enumerate(exact_types):
+                params[f"et_{i}"] = t
+    elif event_type:
+        # Legacy single-type filter — kept for backward compatibility
         if event_type in ("blocked", "order", "option", "capital"):
             where_parts.append("event_type LIKE :etype")
             params["etype"] = f"{event_type}%"
@@ -381,16 +401,18 @@ async def get_activity_log(
             params["etype"] = event_type
 
     if date_from:
-        where_parts.append("created_at >= :date_from::timestamptz")
+        # Use CAST() instead of :: to avoid SQLAlchemy interpreting
+        # :date_from::timestamptz as two named parameters
+        where_parts.append("created_at >= CAST(:date_from AS TIMESTAMPTZ)")
         params["date_from"] = date_from
 
     if date_to:
         # ISO datetime strings (contain 'T') use exact comparison;
         # plain date strings get end-of-day inclusion for backward compat.
         if 'T' in date_to:
-            where_parts.append("created_at <= :date_to::timestamptz")
+            where_parts.append("created_at <= CAST(:date_to AS TIMESTAMPTZ)")
         else:
-            where_parts.append("created_at < (:date_to::date + interval '1 day')")
+            where_parts.append("created_at < CAST(:date_to AS DATE) + interval '1 day'")
         params["date_to"] = date_to
 
     if search:

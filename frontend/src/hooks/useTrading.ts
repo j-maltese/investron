@@ -55,6 +55,8 @@ export function useOrders(strategyId?: string) {
 export function useActivityLog(params?: {
   strategyId?: string
   eventType?: string
+  /** Comma-separated event types for server-side category filtering */
+  eventTypes?: string
   dateFrom?: string
   dateTo?: string
   search?: string
@@ -66,12 +68,12 @@ export function useActivityLog(params?: {
 }) {
   // Disable auto-refetch when the user has active filters — constant re-fetches
   // cause the page to flash/re-render and fight with the user's selections.
-  const hasActiveFilters = !!(params?.dateFrom || params?.dateTo || params?.search)
+  const hasActiveFilters = !!(params?.dateFrom || params?.dateTo || params?.search || params?.eventTypes)
 
   return useQuery({
     queryKey: [
       'trading-activity',
-      params?.strategyId, params?.eventType,
+      params?.strategyId, params?.eventType, params?.eventTypes,
       params?.dateFrom, params?.dateTo,
       params?.search,
       params?.limit, params?.offset,
@@ -79,6 +81,7 @@ export function useActivityLog(params?: {
     queryFn: () => api.getTradingActivity({
       strategy_id: params?.strategyId,
       event_type: params?.eventType,
+      event_types: params?.eventTypes,
       date_from: params?.dateFrom,
       date_to: params?.dateTo,
       search: params?.search,
