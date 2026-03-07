@@ -27,14 +27,15 @@ Trading Engine (background loop, runs every 60s during market hours)
 │     Simple Stock:                                             │
 │       a. Sync pending orders with Alpaca (poll for fills)     │
 │       b. Check existing positions for sell signals:           │
-│          - Stop-loss (price down > 10% from entry)            │
-│          - Take-profit (price up > 20% from entry)            │
-│          - AI says sell with high confidence                   │
+│          - Stop-loss (3-layer confirm + stop-limit order)     │
+│          - Take-profit (yfinance confirm + limit order)       │
+│          - AI says sell with high confidence (limit order)    │
 │       c. Find new buy opportunities:                          │
 │          - Filter: screener composite scores (free)           │
 │          - Confirm: GPT-4o trade signal (max 5/cycle)         │
+│          - Safety: staleness, spread, yfinance checks         │
 │          - Size: max 25% of capital per position              │
-│          - Execute: market order via Alpaca                   │
+│          - Execute: limit order via Alpaca                    │
 │                                                               │
 │     Wheel:                                                    │
 │       a. Get candidates from screener (or fixed list)        │
@@ -320,8 +321,10 @@ backend/app/
 │   │                              #   run_auto_index_cycle() — daily SEC filing indexing
 │   │                              #   _get_candidate_tickers() — screener top N by composite score
 │   │                              #   _get_ai_trade_signal() — GPT-4o with financials + RAG filing context
+│   │                              #   _validate_price_for_trade() — Layer 1 safety (staleness/spread/yfinance)
+│   │                              #   _get_price_details() — Alpaca price + timestamp + spread data
 │   │                              #   _sync_pending_orders() — poll Alpaca for fills
-│   │                              #   _execute_buy() / _execute_sell() — order + position management
+│   │                              #   _execute_buy() / _execute_sell() — limit/stop-limit order management
 │   │
 │   └── wheel_strategy.py         # Mechanical options income strategy (The Wheel)
 │                                  #   run_wheel_cycle() — sync → detect assignments → per-symbol processing
@@ -477,6 +480,11 @@ Settings in `backend/app/config.py`, overridable via environment variables:
 | `TRADING_RAG_ENABLED` | `true` | Enable/disable RAG filing context in trade signals |
 | `TRADING_AUTO_INDEX_TOP_N` | `10` | How many top screener candidates to auto-index daily |
 | `TRADING_RAG_MAX_TOKENS` | `2000` | Max filing context tokens per trade signal prompt |
+| `PRICE_CONFIRM_DIVERGENCE_PCT` | `5.0` | Max % divergence between Alpaca & yfinance before blocking a sell |
+| `SPREAD_MAX_PCT` | `2.0` | Block trades when bid/ask spread exceeds this % (illiquid/bad data) |
+| `PRICE_STALENESS_MAX_SECONDS` | `300` | Reject prices with last trade older than this during market hours |
+| `BUY_LIMIT_OFFSET_PCT` | `0.5` | Buy limit price = current price × (1 + this%) — buffer to ensure fill |
+| `STOP_LOSS_LIMIT_OFFSET_PCT` | `2.0` | Stop-limit sell: limit price offset below stop trigger price |
 | `SCANNER_PREFERRED_HOUR_UTC` | `21` | Daily scan start hour (21 = 5 PM ET) |
 
 ## Setup
@@ -537,12 +545,27 @@ For each order with status 'pending' or 'submitted':
 
 ```
 For each open position:
-  → Get latest price from Alpaca market data (bid/ask midpoint)
+  → Get latest price from Alpaca (last trade + bid/ask + trade timestamp + spread)
   → Update unrealized P&L
-  → Check stop-loss:  price dropped > 10% from entry → SELL (market order)
-  → Check take-profit: price up > 20% from entry → SELL (market order)
+
+  → Check stop-loss (3-layer confirmation — prevents false-trigger sells):
+      1. Alpaca price shows -10%+ drop from entry
+      2. Re-fetch from Alpaca (same-source double-check)
+      3. Run Layer 1 safety checks:
+         a. Price staleness: reject if last trade > 5 min old (market hours)
+         b. Bid/ask spread: reject if spread > 2% (illiquid/bad data)
+         c. yfinance cross-check: reject if Alpaca vs yfinance diverge > 5%
+      → All pass → SELL via stop-limit order (stop at current, limit 2% below)
+
+  → Check take-profit:
+      1. Price up > 20% from entry
+      2. Run Layer 1 safety checks (staleness + spread + yfinance)
+      → All pass → SELL via limit order at current price
+
   → AI sell check: call GPT-4o with "hold or sell" prompt
-      → If action=sell AND confidence >= 0.7 → SELL
+      → If action=sell AND confidence >= 0.7:
+          → Run staleness + spread checks (no yfinance — not price-triggered)
+          → SELL via limit order at ~current price
 ```
 
 ### Step 3: Find Buy Opportunities
@@ -558,8 +581,10 @@ Build candidate list:
 For each candidate (up to 5 AI calls per cycle):
   → Call GPT-4o with BUY prompt + full financial context + RAG filing excerpts
   → If action=buy AND confidence >= 0.7:
+      → Fetch full price data (trade + bid/ask + timestamp + spread)
+      → Run Layer 1 safety checks (staleness + spread)
       → Calculate shares: floor(cash * 25% / price) — whole shares only
-      → Submit market order to Alpaca
+      → Submit limit order (current price + 0.5% buffer) via Alpaca
       → Create local position + order records
       → Log activity
 ```
@@ -725,38 +750,45 @@ With $30,000 and screener-driven candidates (max price $200), the Wheel can run 
 
 ### Activity Log Event Types
 
-The Wheel generates extensive activity logs for monitoring. Three categories:
+Both strategies generate extensive activity logs for monitoring. Three categories:
 
 **Decision logs** (WHY a decision was made):
-| Event Type | When |
-|-----------|------|
-| `option_selected` | Best option chosen from chain (includes score, delta, yield, candidates evaluated) |
-| `put_sold` | Put sell order submitted (includes strike, premium, cash committed/remaining) |
-| `call_sold` | Call sell order submitted (includes strike, premium, adjusted cost basis) |
-| `roll_executed` | Put rolled to new strike/date (includes old/new symbols, net credit) |
-| `hard_stop` | Stock sold on hard stop (includes entry/exit price, loss %, premiums collected) |
-| `capital_efficiency_exit` | Stock sold after extended hold (includes days held, loss %) |
+| Event Type | Strategy | When |
+|-----------|----------|------|
+| `signal` | Simple Stock | AI evaluated a candidate — includes action, confidence, reasoning |
+| `option_selected` | Wheel | Best option chosen from chain (includes score, delta, yield, candidates evaluated) |
+| `put_sold` | Wheel | Put sell order submitted (includes strike, premium, cash committed/remaining) |
+| `call_sold` | Wheel | Call sell order submitted (includes strike, premium, adjusted cost basis) |
+| `roll_executed` | Wheel | Put rolled to new strike/date (includes old/new symbols, net credit) |
+| `hard_stop` | Wheel | Stock sold on hard stop (includes entry/exit price, loss %, premiums collected) |
+| `capital_efficiency_exit` | Wheel | Stock sold after extended hold (includes days held, loss %) |
+| `auto_index` | Simple Stock | Daily SEC filing indexing started/completed (includes ticker list) |
 
 **Execution logs** (what happened, when):
-| Event Type | When |
-|-----------|------|
-| `order_placed` | Order submitted to Alpaca |
-| `order_filled` | Fill confirmed (includes fill price, premium credited) |
-| `assignment` | Put exercised, now holding stock |
-| `called_away` | Call exercised, shares sold, wheel cycle complete |
-| `option_expired` | Option expired worthless (kept premium) |
-| `phase_transition` | Symbol moved to new wheel phase |
+| Event Type | Strategy | When |
+|-----------|----------|------|
+| `order_placed` | Both | Order submitted to Alpaca (includes order type, limit/stop prices) |
+| `order_filled` | Both | Fill confirmed (includes fill price, premium credited) |
+| `assignment` | Wheel | Put exercised, now holding stock |
+| `called_away` | Wheel | Call exercised, shares sold, wheel cycle complete |
+| `option_expired` | Wheel | Option expired worthless (kept premium) |
+| `phase_transition` | Wheel | Symbol moved to new wheel phase |
 
 **Blocked logs** (what the program wanted to do but couldn't):
-| Event Type | When |
-|-----------|------|
-| `blocked_insufficient_cash` | Wanted to sell put but can't afford assignment |
-| `blocked_too_expensive` | Ticker's shares cost more than total capital |
-| `blocked_no_options` | No contracts passed filters (includes filter breakdown) |
-| `blocked_no_greeks` | Using moneyness fallback for delta |
-| `blocked_position_exists` | Already have an open position on this symbol |
-| `blocked_roll_no_credit` | Wanted to roll but can't get net credit |
-| `blocked_pdt_limit` | Day trade would exceed 3-per-5-day PDT limit |
+| Event Type | Strategy | When |
+|-----------|----------|------|
+| `blocked_stop_loss` | Simple Stock | Stop-loss not confirmed on Alpaca re-fetch (bad initial read) |
+| `blocked_stop_loss_price_mismatch` | Simple Stock | Stop-loss blocked: Alpaca vs yfinance price divergence > 5% |
+| `blocked_take_profit_price_mismatch` | Simple Stock | Take-profit blocked: Alpaca vs yfinance price divergence > 5% |
+| `blocked_stale_price` | Simple Stock | Price too old during market hours (last trade > 5 min ago) |
+| `blocked_wide_spread` | Simple Stock | Bid/ask spread > 2% — illiquid stock or bad data |
+| `blocked_insufficient_cash` | Wheel | Wanted to sell put but can't afford assignment |
+| `blocked_too_expensive` | Wheel | Ticker's 100 shares exceed total strategy capital |
+| `blocked_no_options` | Wheel | No contracts passed filters (includes filter breakdown) |
+| `blocked_no_greeks` | Wheel | Using moneyness fallback for delta |
+| `blocked_position_exists` | Wheel | Already have an open position on this symbol |
+| `blocked_roll_no_credit` | Wheel | Wanted to roll but can't get net credit |
+| `blocked_pdt_limit` | Wheel | Day trade would exceed 3-per-5-day PDT limit |
 
 All event details are stored in the `details` JSONB column and visible in the frontend Activity Feed via expandable detail rows.
 
@@ -766,8 +798,12 @@ All event details are stored in the `details` JSONB column and visible in the fr
 |---------|----------|----------|
 | **Circuit breaker** | Both | Auto-pauses strategy if drawdown > `max_loss_pct` (default 20%) |
 | **Position sizing** | Simple Stock | Max 25% of capital in a single position |
-| **Stop-loss** | Simple Stock | Auto-sells if price drops > 10% from entry |
-| **Take-profit** | Simple Stock | Auto-sells if price rises > 20% from entry |
+| **Stop-loss** | Simple Stock | Auto-sells if price drops > 10% from entry — 3-layer confirmation (Alpaca re-fetch + staleness/spread checks + yfinance cross-check), then stop-limit order |
+| **Take-profit** | Simple Stock | Auto-sells if price rises > 20% from entry — validated with yfinance confirmation, then limit order |
+| **Price confirmation** | Simple Stock | Independent yfinance price check for stop-loss/take-profit — blocks if Alpaca vs yfinance diverge > 5%. Falls back to bid/ask midpoint cross-check if yfinance unavailable |
+| **Price staleness** | Simple Stock | Rejects prices with last trade > 5 minutes old during market hours (stale data = unreliable decisions) |
+| **Spread check** | Simple Stock | Blocks all trades when bid/ask spread > 2% — indicates illiquidity or bad market data |
+| **No market orders** | Simple Stock | All trades use limit or stop-limit orders — prevents runaway fills during volatility or flash crashes |
 | **Hard stop** | Wheel | Sells assigned stock if down > 25% from entry |
 | **Rolling puts** | Wheel | Rolls deep-ITM puts near expiry for net credit when possible |
 | **Capital efficiency exits** | Wheel | Reviews assigned stock held > 60 days with no recovery |
@@ -858,10 +894,18 @@ INFO: Simple stock cycle starting (cash=$500.00)
 INFO: Simple stock candidates: 8 from screener (min_score=60, top_n=20)
 INFO: RAG: injected 5 filing chunks (1842 tokens) for AAPL trade signal
 INFO: AI signal for AAPL: buy (conf=0.82)
-INFO: Buy order placed: AAPL x3 @ ~$175.50
+INFO: Buy limit order placed: AAPL x3 @ limit=$176.38
 INFO: RAG: injected 4 filing chunks (1560 tokens) for MSFT trade signal
 INFO: AI signal for MSFT: hold (conf=0.45)
 INFO: Simple stock cycle complete
+```
+
+**Layer 1 safety check logs:**
+```
+INFO: Price confirmed for stop_loss ACT: Alpaca=$41.42, yfinance=$41.38 (0.1% divergence)
+WARNING: Stop-loss blocked for XYZ: Price mismatch: Alpaca=$36.34 vs yfinance=$41.42 (14.0% divergence, max 5%)
+WARNING: buy ILLQ blocked — Spread too wide: 3.45% (max 2.0%)
+WARNING: stop_loss STALE blocked — Price stale: last trade 342s ago (max 300s during market hours)
 ```
 
 ## Implementation Status
@@ -871,4 +915,6 @@ INFO: Simple stock cycle complete
 | **Phase 1** | Complete | DB schema, Alpaca client, trading DB helpers, API endpoints, frontend shell (strategy cards, positions/orders/activity tables, portfolio summary) |
 | **Phase 2** | Complete | Simple stock strategy (AI signals + execution), trading engine wiring, market hours gate, scanner timing (hourly → daily at 5 PM ET), RAG-enhanced trade signals (daily auto-index + filing context injection) |
 | **Phase 3** | Complete | Wheel options strategy — state machine, option selection, defensive suite (hard stops, rolling, adjusted cost basis, capital efficiency), enhanced Activity Feed with filters/expand/date range, comprehensive observability logging |
-| **Phase 4** | Not started | Polish — P&L charts, strategy config modal, report generation, CSV export |
+| **Phase 3.5** | Complete | Layer 1 Execution Safety — independent yfinance price confirmation, bid/ask spread checks, price staleness validation, limit/stop-limit orders (no market orders), 3-layer stop-loss confirmation |
+| **Phase 4** | Not started | Layer 2 Smarter Entry/Exit — intrinsic value guardrails, trailing stop-loss, scaled entries (DCA), volatility-adjusted sizing |
+| **Phase 5** | Not started | Polish — P&L charts, strategy config modal, report generation, CSV export |

@@ -122,10 +122,17 @@ async def submit_stock_order(
     side: str,
     order_type: str = "market",
     limit_price: float | None = None,
+    stop_price: float | None = None,
     time_in_force: str = "day",
 ) -> dict:
-    """Submit a stock order to Alpaca. Returns order details including alpaca_order_id."""
-    from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest
+    """Submit a stock order to Alpaca. Returns order details including alpaca_order_id.
+
+    Supported order_type values:
+      - "market": immediate fill at best available price
+      - "limit": fill at limit_price or better
+      - "stop_limit": triggers at stop_price, then becomes limit order at limit_price
+    """
+    from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest, StopLimitOrderRequest
     from alpaca.trading.enums import OrderSide, TimeInForce
 
     try:
@@ -133,13 +140,22 @@ async def submit_stock_order(
         order_side = OrderSide.BUY if side == "buy" else OrderSide.SELL
         tif = TimeInForce.DAY if time_in_force == "day" else TimeInForce.GTC
 
-        if order_type == "limit" and limit_price is not None:
+        if order_type == "stop_limit" and stop_price is not None and limit_price is not None:
+            request = StopLimitOrderRequest(
+                symbol=ticker,
+                qty=qty,
+                side=order_side,
+                time_in_force=tif,
+                stop_price=round(stop_price, 2),
+                limit_price=round(limit_price, 2),
+            )
+        elif order_type == "limit" and limit_price is not None:
             request = LimitOrderRequest(
                 symbol=ticker,
                 qty=qty,
                 side=order_side,
                 time_in_force=tif,
-                limit_price=limit_price,
+                limit_price=round(limit_price, 2),
             )
         else:
             request = MarketOrderRequest(
@@ -150,7 +166,8 @@ async def submit_stock_order(
             )
 
         order = client.submit_order(request)
-        logger.info("Submitted %s order: %s %s x%.2f", order_type, side, ticker, qty)
+        logger.info("Submitted %s order: %s %s x%.2f (limit=%s, stop=%s)",
+                     order_type, side, ticker, qty, limit_price, stop_price)
 
         return {
             "alpaca_order_id": str(order.id),
