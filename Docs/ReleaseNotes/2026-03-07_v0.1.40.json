@@ -1,0 +1,15 @@
+{
+  "version": "0.1.40",
+  "date": "2026-03-07",
+  "title": "v0.1.40",
+  "summary": "Release 0.1.40 includes 1 enhancement.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Improves watchlist for 2 users"
+      ]
+    }
+  ]
+}
