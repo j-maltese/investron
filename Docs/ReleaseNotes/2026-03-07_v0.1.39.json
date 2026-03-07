@@ -1,0 +1,15 @@
+{
+  "version": "0.1.39",
+  "date": "2026-03-07",
+  "title": "v0.1.39",
+  "summary": "Release 0.1.39 includes 1 enhancement.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Makes target price and noes editable on watchlist"
+      ]
+    }
+  ]
+}
