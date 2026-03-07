@@ -331,12 +331,21 @@ async def run_wheel_cycle(db: AsyncSession, strategy: dict) -> None:
     option_symbols = [p["option_symbol"] for p in option_positions]
     option_quotes = await alpaca_client.get_option_quotes(option_symbols) if option_symbols else {}
 
+    # Cache underlying prices so we don't re-fetch for tickers that appear
+    # in both stock and option positions (e.g., assigned + selling calls)
+    underlying_prices: dict[str, float | None] = {}
+
     for pos in open_positions:
         if pos.get("status") != "open":
             continue
 
+        ticker = pos["ticker"]
+        # Fetch underlying price once per ticker per cycle
+        if ticker not in underlying_prices:
+            underlying_prices[ticker] = await _get_latest_price(ticker)
+
         if pos.get("asset_type") == "stock":
-            price = await _get_latest_price(pos["ticker"])
+            price = underlying_prices[ticker]
             if price is not None:
                 qty = float(pos.get("quantity", 0))
                 entry = float(pos.get("avg_entry_price", 0))
@@ -344,6 +353,7 @@ async def run_wheel_cycle(db: AsyncSession, strategy: dict) -> None:
                     db, pos["id"],
                     current_value=round(price * qty, 2),
                     unrealized_pnl=round((price - entry) * qty, 2),
+                    underlying_price=round(price, 4),
                 )
 
         elif pos.get("asset_type") == "option":
@@ -351,6 +361,11 @@ async def run_wheel_cycle(db: AsyncSession, strategy: dict) -> None:
             quote = option_quotes.get(option_symbol) if option_symbol else None
             contracts = pos.get("contracts") or 1
             premium_collected = float(pos.get("cost_basis", 0))  # Total premium we received
+
+            # Store the underlying stock price on option positions so the UI
+            # can show Strike / Current for at-a-glance ITM/OTM assessment
+            stock_price = underlying_prices.get(ticker)
+            price_update = {"underlying_price": round(stock_price, 4)} if stock_price else {}
 
             if quote and quote["mid_price"] > 0:
                 # Buyback cost = current mid price × 100 shares × contracts
@@ -364,6 +379,7 @@ async def run_wheel_cycle(db: AsyncSession, strategy: dict) -> None:
                     db, pos["id"],
                     current_value=current_value,
                     unrealized_pnl=unrealized_pnl,
+                    **price_update,
                 )
             elif premium_collected > 0:
                 # No live quote available — show premium as P&L (best estimate)
@@ -371,6 +387,7 @@ async def run_wheel_cycle(db: AsyncSession, strategy: dict) -> None:
                     db, pos["id"],
                     current_value=0,
                     unrealized_pnl=round(premium_collected, 2),
+                    **price_update,
                 )
 
     await trading_db.sync_strategy_pnl(db, strategy_id)
@@ -444,20 +461,28 @@ async def _get_position_by_id(db: AsyncSession, position_id: int) -> dict | None
 
 
 async def _get_latest_price(ticker: str) -> float | None:
-    """Get latest stock price from Alpaca market data (bid/ask midpoint).
+    """Get latest stock price from Alpaca market data.
 
-    Uses the stock data client to fetch the most recent quote. Returns the
-    midpoint of bid/ask for a fair estimate, falling back to ask price.
-    Returns None if the quote can't be fetched (e.g., API error, no data).
+    Prefers last trade price (actual executed transaction) over bid/ask midpoint
+    for more reliable pricing. Falls back to midpoint if no recent trade exists.
+    Returns None if the price can't be fetched (e.g., API error, no data).
     """
     try:
         client = alpaca_client.get_stock_data_client()
+
+        # Last trade price is more reliable — represents an actual transaction
+        from alpaca.data.requests import StockLatestTradeRequest
+        trade_req = StockLatestTradeRequest(symbol_or_symbols=ticker)
+        trades = client.get_stock_latest_trade(trade_req)
+        if ticker in trades and trades[ticker].price:
+            return float(trades[ticker].price)
+
+        # Fall back to bid/ask midpoint if no recent trade
         from alpaca.data.requests import StockLatestQuoteRequest
         request = StockLatestQuoteRequest(symbol_or_symbols=ticker)
         quotes = client.get_stock_latest_quote(request)
         if ticker in quotes:
             q = quotes[ticker]
-            # Midpoint gives a fairer estimate than just bid or ask alone
             if q.bid_price and q.ask_price:
                 return float(q.bid_price + q.ask_price) / 2
             return float(q.ask_price) if q.ask_price else None

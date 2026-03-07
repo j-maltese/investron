@@ -57,17 +57,23 @@ export function useActivityLog(params?: {
   eventType?: string
   dateFrom?: string
   dateTo?: string
+  search?: string
   limit?: number
   offset?: number
   /** Set false to disable fetching — used when ActivityFeed is in compact mode
    *  and events are supplied externally by the parent component. */
   enabled?: boolean
 }) {
+  // Disable auto-refetch when the user has active filters — constant re-fetches
+  // cause the page to flash/re-render and fight with the user's selections.
+  const hasActiveFilters = !!(params?.dateFrom || params?.dateTo || params?.search)
+
   return useQuery({
     queryKey: [
       'trading-activity',
       params?.strategyId, params?.eventType,
       params?.dateFrom, params?.dateTo,
+      params?.search,
       params?.limit, params?.offset,
     ],
     queryFn: () => api.getTradingActivity({
@@ -75,11 +81,13 @@ export function useActivityLog(params?: {
       event_type: params?.eventType,
       date_from: params?.dateFrom,
       date_to: params?.dateTo,
-      limit: params?.limit || 50,
+      search: params?.search,
+      limit: params?.limit || 100,
       offset: params?.offset || 0,
     }),
     staleTime: 10_000,
-    refetchInterval: params?.enabled === false ? false : 15_000,
+    // Only auto-poll when no filters are active — avoids fighting with user input
+    refetchInterval: params?.enabled === false ? false : (hasActiveFilters ? false : 30_000),
     enabled: params?.enabled !== false,
   })
 }

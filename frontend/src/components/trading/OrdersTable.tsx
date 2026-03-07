@@ -21,6 +21,35 @@ const STRATEGY_BADGES: Record<string, { label: string; color: string }> = {
   wheel: { label: 'WH', color: 'bg-amber-500/15 text-amber-400' },
 }
 
+// Header tooltip definitions for every column
+const HEADER_TOOLTIPS: Record<string, string> = {
+  date: 'When the order was submitted to Alpaca',
+  ticker: 'Stock ticker symbol',
+  side: 'BUY or SELL',
+  type: 'Stock order type (market/limit) or option type (PUT/CALL)',
+  strike: 'Option strike price',
+  premium: 'Limit price for option orders (per-share premium)',
+  exp: 'Option expiration date',
+  qty: 'Number of shares or contracts',
+  fill_price: 'Actual price per share/contract when the order was filled',
+  status: 'Order lifecycle: new (accepted) \u2192 filled | cancelled | rejected',
+  reason: 'Why this order was placed (stop_loss, take_profit, ai_signal, etc.)',
+}
+
+/** Tooltip-enabled table header cell */
+function TH({ id, children, className = '' }: { id: string; children: React.ReactNode; className?: string }) {
+  return (
+    <th
+      className={`px-3 py-2.5 font-medium ${className}`}
+      title={HEADER_TOOLTIPS[id]}
+    >
+      <span className="border-b border-dotted border-[var(--muted-foreground)] cursor-help">
+        {children}
+      </span>
+    </th>
+  )
+}
+
 interface OrdersTableProps {
   orders: TradingOrder[]
   totalCount: number
@@ -42,17 +71,17 @@ export function OrdersTable({ orders, totalCount }: OrdersTableProps) {
           <thead>
             <tr className="border-b border-[var(--border)] text-[var(--muted-foreground)] text-xs">
               <th className="text-left px-3 py-2.5 font-medium w-8"></th>
-              <th className="text-left px-3 py-2.5 font-medium">Date</th>
-              <th className="text-left px-3 py-2.5 font-medium">Ticker</th>
-              <th className="text-left px-3 py-2.5 font-medium">Side</th>
-              <th className="text-left px-3 py-2.5 font-medium">Type</th>
-              <th className="text-right px-3 py-2.5 font-medium">Strike</th>
-              <th className="text-right px-3 py-2.5 font-medium">Premium</th>
-              <th className="text-left px-3 py-2.5 font-medium">Exp</th>
-              <th className="text-right px-3 py-2.5 font-medium">Qty</th>
-              <th className="text-right px-3 py-2.5 font-medium">Fill Price</th>
-              <th className="text-left px-3 py-2.5 font-medium">Status</th>
-              <th className="text-left px-3 py-2.5 font-medium">Reason</th>
+              <TH id="date" className="text-left">Date</TH>
+              <TH id="ticker" className="text-left">Ticker</TH>
+              <TH id="side" className="text-left">Side</TH>
+              <TH id="type" className="text-left">Type</TH>
+              <TH id="strike" className="text-right">Strike</TH>
+              <TH id="premium" className="text-right">Premium</TH>
+              <TH id="exp" className="text-left">Exp</TH>
+              <TH id="qty" className="text-right">Qty</TH>
+              <TH id="fill_price" className="text-right">Fill Price</TH>
+              <TH id="status" className="text-left">Status</TH>
+              <TH id="reason" className="text-left">Reason</TH>
             </tr>
           </thead>
           <tbody>

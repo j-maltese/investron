@@ -216,6 +216,7 @@ export const api = {
   getTradingActivity: (params?: {
     strategy_id?: string; event_type?: string;
     date_from?: string; date_to?: string;
+    search?: string;
     limit?: number; offset?: number;
   }) => {
     const sp = new URLSearchParams()
@@ -223,6 +224,7 @@ export const api = {
     if (params?.event_type) sp.set('event_type', params.event_type)
     if (params?.date_from) sp.set('date_from', params.date_from)
     if (params?.date_to) sp.set('date_to', params.date_to)
+    if (params?.search) sp.set('search', params.search)
     if (params?.limit) sp.set('limit', String(params.limit))
     if (params?.offset) sp.set('offset', String(params.offset))
     const qs = sp.toString()
