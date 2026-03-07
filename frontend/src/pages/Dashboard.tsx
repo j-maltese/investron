@@ -5,18 +5,34 @@ import { PageLayout } from '@/components/layout/PageLayout'
 import { useWatchlist, useAlerts, useAddToWatchlist, useRemoveFromWatchlist, useUpdateWatchlistItem } from '@/hooks/useWatchlist'
 import { ValueScreener } from '@/components/dashboard/ValueScreener'
 import { TickerAutocomplete } from '@/components/search/TickerAutocomplete'
+import type { WatchlistView } from '@/lib/types'
 
 function formatCurrency(value?: number | null): string {
   if (value == null) return 'N/A'
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value)
 }
 
+const VIEW_OPTIONS: { value: WatchlistView; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'john', label: 'John' },
+  { value: 'mark', label: 'Mark' },
+]
+
+// Badge colors per owner — first letter shown in a small circle
+const OWNER_COLORS: Record<string, string> = {
+  John: 'bg-blue-500/20 text-blue-400',
+  Mark: 'bg-emerald-500/20 text-emerald-400',
+}
+
 export function Dashboard() {
-  const { data: watchlistData, isLoading: watchlistLoading } = useWatchlist()
+  const [view, setView] = useState<WatchlistView>('all')
+  const { data: watchlistData, isLoading: watchlistLoading } = useWatchlist(view)
   const { data: alertsData } = useAlerts()
   const addMutation = useAddToWatchlist()
   const removeMutation = useRemoveFromWatchlist()
   const updateMutation = useUpdateWatchlistItem()
+
+  const currentUserEmail = watchlistData?.current_user_email
 
   const [newTicker, setNewTicker] = useState('')
   const [newTarget, setNewTarget] = useState('')
@@ -90,6 +106,22 @@ export function Dashboard() {
         <div className="card">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold text-lg">Watchlist</h2>
+            {/* View toggle pills */}
+            <div className="flex gap-1 bg-[var(--muted)] rounded-lg p-0.5">
+              {VIEW_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setView(opt.value)}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                    view === opt.value
+                      ? 'bg-[var(--accent)] text-white'
+                      : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Add ticker form — autocomplete searches by ticker or company name */}
@@ -126,7 +158,7 @@ export function Dashboard() {
             <div className="text-center py-8 text-[var(--muted-foreground)]">Loading watchlist...</div>
           ) : watchlistData?.items?.length === 0 ? (
             <div className="text-center py-8 text-[var(--muted-foreground)]">
-              Your watchlist is empty. Add a ticker above to get started.
+              {view === 'all' ? 'No watchlist items yet.' : `No items in ${VIEW_OPTIONS.find(o => o.value === view)?.label}'s watchlist.`}
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -142,85 +174,105 @@ export function Dashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {watchlistData?.items?.map((item) => (
-                    <tr key={item.ticker} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--muted)] transition-colors">
-                      <td className="py-2.5 px-2">
-                        <Link to={`/research/${item.ticker}`} className="font-semibold hover:text-[var(--accent)]">
-                          {item.ticker}
-                        </Link>
-                      </td>
-                      <td className="py-2.5 px-2 text-[var(--muted-foreground)]">
-                        {item.company_name || '-'}
-                      </td>
-                      <td className="py-2.5 px-2 text-right font-mono">
-                        {formatCurrency(item.current_price)}
-                      </td>
-                      <td className="py-2.5 px-2 text-right font-mono text-[var(--muted-foreground)]">
-                        {editingCell?.ticker === item.ticker && editingCell.field === 'target_price' ? (
-                          <input
-                            ref={editRef}
-                            type="number"
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            onBlur={saveEdit}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') saveEdit()
-                              if (e.key === 'Escape') cancelEdit()
-                            }}
-                            className="input w-24 text-sm text-right font-mono py-0.5 px-1"
-                            step="0.01"
-                          />
-                        ) : (
-                          <span
-                            className="cursor-pointer hover:text-[var(--accent)] transition-colors"
-                            onClick={() => startEditing(item.ticker, 'target_price', item.target_price?.toString() ?? '')}
-                            title="Click to edit target price"
-                          >
-                            {item.target_price ? formatCurrency(item.target_price) : '-'}
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-2 text-[var(--muted-foreground)] max-w-xs">
-                        {editingCell?.ticker === item.ticker && editingCell.field === 'notes' ? (
-                          <input
-                            ref={editRef}
-                            type="text"
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            onBlur={saveEdit}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') saveEdit()
-                              if (e.key === 'Escape') cancelEdit()
-                            }}
-                            className="input w-full text-sm py-0.5 px-1"
-                            placeholder="Add a note..."
-                          />
-                        ) : (
-                          <span
-                            className="cursor-pointer hover:text-[var(--accent)] transition-colors truncate block"
-                            onClick={() => startEditing(item.ticker, 'notes', item.notes ?? '')}
-                            title="Click to edit notes"
-                          >
-                            {item.notes || '-'}
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-2 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Link to={`/research/${item.ticker}`} className="p-1 hover:text-[var(--accent)]" title="Research">
-                            <ExternalLink className="w-3.5 h-3.5" />
-                          </Link>
-                          <button
-                            onClick={() => removeMutation.mutate(item.ticker)}
-                            className="p-1 hover:text-loss"
-                            title="Remove"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {watchlistData?.items?.map((item) => {
+                    const isOwner = item.user_email === currentUserEmail
+                    const ownerBadgeColor = OWNER_COLORS[item.owner_name ?? ''] ?? 'bg-gray-500/20 text-gray-400'
+
+                    return (
+                      <tr key={`${item.ticker}-${item.user_email}`} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--muted)] transition-colors">
+                        <td className="py-2.5 px-2">
+                          <div className="flex items-center gap-1.5">
+                            <Link to={`/research/${item.ticker}`} className="font-semibold hover:text-[var(--accent)]">
+                              {item.ticker}
+                            </Link>
+                            {/* Owner badge — always visible so you know whose pick it is */}
+                            {item.owner_name && (
+                              <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold ${ownerBadgeColor}`} title={item.owner_name}>
+                                {item.owner_name[0]}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-2 text-[var(--muted-foreground)]">
+                          {item.company_name || '-'}
+                        </td>
+                        <td className="py-2.5 px-2 text-right font-mono">
+                          {formatCurrency(item.current_price)}
+                        </td>
+                        <td className="py-2.5 px-2 text-right font-mono text-[var(--muted-foreground)]">
+                          {isOwner && editingCell?.ticker === item.ticker && editingCell.field === 'target_price' ? (
+                            <input
+                              ref={editRef}
+                              type="number"
+                              value={editValue}
+                              onChange={(e) => setEditValue(e.target.value)}
+                              onBlur={saveEdit}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') saveEdit()
+                                if (e.key === 'Escape') cancelEdit()
+                              }}
+                              className="input w-24 text-sm text-right font-mono py-0.5 px-1"
+                              step="0.01"
+                            />
+                          ) : isOwner ? (
+                            <span
+                              className="cursor-pointer hover:text-[var(--accent)] transition-colors"
+                              onClick={() => startEditing(item.ticker, 'target_price', item.target_price?.toString() ?? '')}
+                              title="Click to edit target price"
+                            >
+                              {item.target_price ? formatCurrency(item.target_price) : '-'}
+                            </span>
+                          ) : (
+                            <span>{item.target_price ? formatCurrency(item.target_price) : '-'}</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-2 text-[var(--muted-foreground)] max-w-xs">
+                          {isOwner && editingCell?.ticker === item.ticker && editingCell.field === 'notes' ? (
+                            <input
+                              ref={editRef}
+                              type="text"
+                              value={editValue}
+                              onChange={(e) => setEditValue(e.target.value)}
+                              onBlur={saveEdit}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') saveEdit()
+                                if (e.key === 'Escape') cancelEdit()
+                              }}
+                              className="input w-full text-sm py-0.5 px-1"
+                              placeholder="Add a note..."
+                            />
+                          ) : isOwner ? (
+                            <span
+                              className="cursor-pointer hover:text-[var(--accent)] transition-colors truncate block"
+                              onClick={() => startEditing(item.ticker, 'notes', item.notes ?? '')}
+                              title="Click to edit notes"
+                            >
+                              {item.notes || '-'}
+                            </span>
+                          ) : (
+                            <span className="truncate block">{item.notes || '-'}</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-2 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <Link to={`/research/${item.ticker}`} className="p-1 hover:text-[var(--accent)]" title="Research">
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </Link>
+                            {/* Only show delete for items the current user owns */}
+                            {isOwner && (
+                              <button
+                                onClick={() => removeMutation.mutate(item.ticker)}
+                                className="p-1 hover:text-loss"
+                                title="Remove"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

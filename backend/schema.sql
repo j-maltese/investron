@@ -56,11 +56,13 @@ CREATE INDEX IF NOT EXISTS idx_filings_date ON filings_cache(filing_date DESC);
 -- Watchlist
 CREATE TABLE IF NOT EXISTS watchlist_items (
     id SERIAL PRIMARY KEY,
-    ticker VARCHAR(10) NOT NULL UNIQUE,
+    ticker VARCHAR(10) NOT NULL,
     company_id INT REFERENCES companies(id) ON DELETE SET NULL,
+    user_email VARCHAR(255),
     notes TEXT,
     target_price DECIMAL(12,2),
-    added_at TIMESTAMPTZ DEFAULT NOW()
+    added_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(ticker, user_email)
 );
 
 -- Saved valuation scenarios
@@ -414,3 +416,24 @@ WHERE id = 'wheel';
 
 -- Add underlying_price column to positions (stores current stock price for display)
 ALTER TABLE trading_positions ADD COLUMN IF NOT EXISTS underlying_price DECIMAL(12,4);
+
+-- Per-user watchlists: add user_email column and migrate existing items.
+-- Both users can watch the same ticker independently (UNIQUE on ticker+email).
+ALTER TABLE watchlist_items ADD COLUMN IF NOT EXISTS user_email VARCHAR(255);
+
+-- Tag existing items by owner (idempotent — only touches rows with no email set)
+UPDATE watchlist_items SET user_email = 'mmalt01@gmail.com'
+WHERE ticker IN ('TPL', 'CVSA') AND user_email IS NULL;
+UPDATE watchlist_items SET user_email = 'john.maltese@gmail.com'
+WHERE user_email IS NULL;
+
+-- Swap unique constraint: (ticker) → (ticker, user_email)
+-- DROP IF EXISTS is safe on repeated runs; ADD only fires if missing.
+ALTER TABLE watchlist_items DROP CONSTRAINT IF EXISTS watchlist_items_ticker_key;
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'watchlist_items_ticker_user_email_key'
+    ) THEN
+        ALTER TABLE watchlist_items ADD CONSTRAINT watchlist_items_ticker_user_email_key UNIQUE (ticker, user_email);
+    END IF;
+END $$;
