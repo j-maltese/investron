@@ -5,7 +5,7 @@
  * because the trading engine may update state every 15-60 seconds.
  */
 
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 
 export function useStrategies() {
@@ -89,6 +89,8 @@ export function useActivityLog(params?: {
       offset: params?.offset || 0,
     }),
     staleTime: 10_000,
+    // Keep old rows visible while loading more — prevents scroll jump on infinite scroll
+    placeholderData: keepPreviousData,
     // Only auto-poll when no filters are active — avoids fighting with user input
     refetchInterval: params?.enabled === false ? false : (hasActiveFilters ? false : 30_000),
     enabled: params?.enabled !== false,
