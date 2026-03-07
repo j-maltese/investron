@@ -1,0 +1,15 @@
+{
+  "version": "0.1.37",
+  "date": "2026-03-07",
+  "title": "v0.1.37",
+  "summary": "Release 0.1.37 includes 1 bug fix.",
+  "sections": [
+    {
+      "type": "bug_fix",
+      "label": "Bug Fixes",
+      "items": [
+        "Fix date filter: asyncpg requires datetime objects, not strings"
+      ]
+    }
+  ]
+}
