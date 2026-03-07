@@ -230,17 +230,22 @@ async def get_orders(
 async def get_activity(
     strategy_id: str | None = Query(None),
     event_type: str | None = Query(None),
+    event_types: str | None = Query(None, description="Comma-separated list of event types for category filtering"),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     search: str | None = Query(None),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    """Activity log feed, newest first. Supports filtering by event type, date range, and text search."""
+    """Activity log feed, newest first. Supports filtering by event type(s), date range, and text search."""
+    # Parse comma-separated event_types into a list for server-side category filtering
+    event_types_list = [t.strip() for t in event_types.split(",") if t.strip()] if event_types else None
+
     events, total = await trading_db.get_activity_log(
         db, strategy_id, event_type=event_type,
+        event_types=event_types_list,
         date_from=date_from, date_to=date_to,
         search=search,
         limit=limit, offset=offset,

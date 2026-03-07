@@ -19,7 +19,7 @@
  * and text search go through the API so the database handles them.
  */
 
-import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import {
   ArrowDownCircle, ArrowUpCircle, AlertTriangle, Play, Square,
   RotateCcw, CircleDot, ShieldAlert, Settings, Crosshair, RefreshCw,
@@ -121,14 +121,16 @@ const LIFECYCLE_TYPES = new Set([
 // Error events: failures and safety triggers
 const ERROR_TYPES = new Set(['error', 'circuit_breaker'])
 
-function matchesFilter(eventType: string, filter: FilterCategory): boolean {
-  if (filter === 'all') return true
-  if (filter === 'decisions') return DECISION_TYPES.has(eventType)
-  if (filter === 'orders') return ORDER_TYPES.has(eventType)
-  if (filter === 'lifecycle') return LIFECYCLE_TYPES.has(eventType)
-  if (filter === 'blocked') return eventType.startsWith('blocked_')
-  if (filter === 'errors') return ERROR_TYPES.has(eventType)
-  return true
+/** Map category to comma-separated event_types string for the API.
+ *  'blocked_*' is a special wildcard the backend expands via LIKE 'blocked_%'. */
+function categoryToEventTypes(category: FilterCategory): string | undefined {
+  if (category === 'all') return undefined
+  if (category === 'decisions') return [...DECISION_TYPES].join(',')
+  if (category === 'orders') return [...ORDER_TYPES].join(',')
+  if (category === 'lifecycle') return [...LIFECYCLE_TYPES].join(',')
+  if (category === 'blocked') return 'blocked_*'
+  if (category === 'errors') return [...ERROR_TYPES].join(',')
+  return undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -239,7 +241,13 @@ export function ActivityFeed({
   strategyId,
 }: ActivityFeedProps) {
   // -- Full-mode state --
-  const [filter, setFilter] = useState<FilterCategory>('all')
+  const [filter, setFilterRaw] = useState<FilterCategory>('all')
+
+  // Reset pagination when category changes — the new query returns different data
+  const setFilter = useCallback((f: FilterCategory) => {
+    setFilterRaw(f)
+    setLoadedCount(PAGE_SIZE)
+  }, [])
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
 
   // Date picker state is local — only committed to the query on Search click
@@ -267,11 +275,14 @@ export function ActivityFeed({
 
   // Fetch data internally in full mode; disabled in compact mode to avoid
   // duplicate fetches (parent already supplies events via props).
+  // Category filter is sent server-side so the DB returns the right events
+  // (client-side filtering missed events beyond the page limit).
   const { data, isLoading, isFetching } = useActivityLog(
     compact
       ? { enabled: false }
       : {
           strategyId,
+          eventTypes: categoryToEventTypes(filter),
           dateFrom: toAPIDatetime(committedDateFrom),
           dateTo: toAPIDatetime(committedDateTo),
           search: committedSearch || undefined,
@@ -280,17 +291,11 @@ export function ActivityFeed({
   )
 
   // In compact mode use externally supplied events; in full mode use hook data
-  const allEvents = compact ? (externalEvents || []) : (data?.events || [])
+  const filteredEvents = compact ? (externalEvents || []) : (data?.events || [])
   const totalCount = compact ? (externalTotal || 0) : (data?.total_count || 0)
 
-  // Client-side category filtering (only meaningful in full mode)
-  const filteredEvents = useMemo(
-    () => (compact ? allEvents : allEvents.filter((e) => matchesFilter(e.event_type, filter))),
-    [allEvents, filter, compact]
-  )
-
   // -- Infinite scroll via IntersectionObserver --
-  const hasMore = !compact && totalCount > allEvents.length
+  const hasMore = !compact && totalCount > filteredEvents.length
   useEffect(() => {
     if (compact || !hasMore) return
     const sentinel = sentinelRef.current
@@ -492,14 +497,14 @@ export function ActivityFeed({
               <Loader2 className="w-4 h-4 animate-spin text-[var(--muted-foreground)]" />
             ) : (
               <span className="text-xs text-[var(--muted-foreground)]">
-                {allEvents.length} of {totalCount} events
+                {filteredEvents.length} of {totalCount} events
               </span>
             )}
           </div>
         )}
 
         {/* Show count when all events are loaded */}
-        {!hasMore && !compact && allEvents.length > 0 && (
+        {!hasMore && !compact && filteredEvents.length > 0 && (
           <div className="text-center text-xs text-[var(--muted-foreground)] py-2">
             {totalCount} event{totalCount !== 1 ? 's' : ''}
           </div>

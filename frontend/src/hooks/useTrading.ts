@@ -5,7 +5,7 @@
  * because the trading engine may update state every 15-60 seconds.
  */
 
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 
 export function useStrategies() {
@@ -55,6 +55,8 @@ export function useOrders(strategyId?: string) {
 export function useActivityLog(params?: {
   strategyId?: string
   eventType?: string
+  /** Comma-separated event types for server-side category filtering */
+  eventTypes?: string
   dateFrom?: string
   dateTo?: string
   search?: string
@@ -66,12 +68,12 @@ export function useActivityLog(params?: {
 }) {
   // Disable auto-refetch when the user has active filters — constant re-fetches
   // cause the page to flash/re-render and fight with the user's selections.
-  const hasActiveFilters = !!(params?.dateFrom || params?.dateTo || params?.search)
+  const hasActiveFilters = !!(params?.dateFrom || params?.dateTo || params?.search || params?.eventTypes)
 
   return useQuery({
     queryKey: [
       'trading-activity',
-      params?.strategyId, params?.eventType,
+      params?.strategyId, params?.eventType, params?.eventTypes,
       params?.dateFrom, params?.dateTo,
       params?.search,
       params?.limit, params?.offset,
@@ -79,6 +81,7 @@ export function useActivityLog(params?: {
     queryFn: () => api.getTradingActivity({
       strategy_id: params?.strategyId,
       event_type: params?.eventType,
+      event_types: params?.eventTypes,
       date_from: params?.dateFrom,
       date_to: params?.dateTo,
       search: params?.search,
@@ -86,6 +89,8 @@ export function useActivityLog(params?: {
       offset: params?.offset || 0,
     }),
     staleTime: 10_000,
+    // Keep old rows visible while loading more — prevents scroll jump on infinite scroll
+    placeholderData: keepPreviousData,
     // Only auto-poll when no filters are active — avoids fighting with user input
     refetchInterval: params?.enabled === false ? false : (hasActiveFilters ? false : 30_000),
     enabled: params?.enabled !== false,
