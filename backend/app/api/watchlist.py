@@ -1,15 +1,23 @@
 import asyncio
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.database import get_db
 from app.models.schemas import WatchlistItemCreate, WatchlistItemUpdate
+from app.auth.dependencies import get_current_user
 from app.services import yfinance_svc
 
 router = APIRouter()
 
 PRICE_FETCH_TIMEOUT = 8  # seconds per ticker
+
+# Email → display name mapping for the two-user household
+USER_DISPLAY_NAMES = {
+    "mmalt01@gmail.com": "Mark",
+    "john.maltese@gmail.com": "John",
+}
 
 
 async def _fetch_price(item: dict) -> None:
@@ -27,45 +35,83 @@ async def _fetch_price(item: dict) -> None:
         item["price_change_pct"] = None
 
 
+def _resolve_view_email(view: str | None) -> str | None:
+    """Convert a view filter name to an email address, or None for 'all'."""
+    if not view or view == "all":
+        return None
+    lookup = {name.lower(): email for email, name in USER_DISPLAY_NAMES.items()}
+    return lookup.get(view.lower())
+
+
 @router.get("")
-async def get_watchlist(db: AsyncSession = Depends(get_db)):
-    """Get all watchlist items with current prices."""
-    result = await db.execute(
-        text("""
-            SELECT w.id, w.ticker, c.name as company_name, w.notes, w.target_price, w.added_at
-            FROM watchlist_items w
-            LEFT JOIN companies c ON w.company_id = c.id
-            ORDER BY w.added_at DESC
-        """)
-    )
+async def get_watchlist(
+    view: Optional[str] = Query(None, description="Filter: 'all', 'john', or 'mark'"),
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Get watchlist items, optionally filtered by owner."""
+    filter_email = _resolve_view_email(view)
+
+    if filter_email:
+        # Specific user's watchlist
+        result = await db.execute(
+            text("""
+                SELECT w.id, w.ticker, c.name as company_name, w.notes, w.target_price, w.added_at, w.user_email
+                FROM watchlist_items w
+                LEFT JOIN companies c ON w.company_id = c.id
+                WHERE w.user_email = :email
+                ORDER BY w.added_at DESC
+            """),
+            {"email": filter_email},
+        )
+    else:
+        # All users' watchlists (default when no view specified, or view=all)
+        result = await db.execute(
+            text("""
+                SELECT w.id, w.ticker, c.name as company_name, w.notes, w.target_price, w.added_at, w.user_email
+                FROM watchlist_items w
+                LEFT JOIN companies c ON w.company_id = c.id
+                ORDER BY w.added_at DESC
+            """)
+        )
+
     items = [dict(row) for row in result.mappings().all()]
+
+    # Add display name for each item so the frontend can show owner badges
+    for item in items:
+        item["owner_name"] = USER_DISPLAY_NAMES.get(item.get("user_email"), "Unknown")
 
     # Enrich with current prices concurrently
     await asyncio.gather(*[_fetch_price(item) for item in items])
 
-    return {"items": items}
+    return {"items": items, "current_user_email": user.get("email")}
 
 
 @router.post("")
-async def add_to_watchlist(item: WatchlistItemCreate, db: AsyncSession = Depends(get_db)):
-    """Add a ticker to the watchlist."""
-    # Ensure company exists in DB
+async def add_to_watchlist(
+    item: WatchlistItemCreate,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Add a ticker to the authenticated user's watchlist."""
     from app.services.company import get_or_create_company
     company = await get_or_create_company(db, item.ticker)
     company_id = company["id"] if company else None
+    user_email = user.get("email")
 
     result = await db.execute(
         text("""
-            INSERT INTO watchlist_items (ticker, company_id, notes, target_price)
-            VALUES (:ticker, :company_id, :notes, :target_price)
-            ON CONFLICT (ticker) DO UPDATE SET
+            INSERT INTO watchlist_items (ticker, company_id, user_email, notes, target_price)
+            VALUES (:ticker, :company_id, :user_email, :notes, :target_price)
+            ON CONFLICT (ticker, user_email) DO UPDATE SET
                 notes = COALESCE(EXCLUDED.notes, watchlist_items.notes),
                 target_price = COALESCE(EXCLUDED.target_price, watchlist_items.target_price)
-            RETURNING id, ticker, notes, target_price, added_at
+            RETURNING id, ticker, notes, target_price, added_at, user_email
         """),
         {
             "ticker": item.ticker.upper(),
             "company_id": company_id,
+            "user_email": user_email,
             "notes": item.notes,
             "target_price": item.target_price,
         },
@@ -75,22 +121,31 @@ async def add_to_watchlist(item: WatchlistItemCreate, db: AsyncSession = Depends
 
 
 @router.delete("/{ticker}")
-async def remove_from_watchlist(ticker: str, db: AsyncSession = Depends(get_db)):
-    """Remove a ticker from the watchlist."""
+async def remove_from_watchlist(
+    ticker: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Remove a ticker from the authenticated user's watchlist only."""
     result = await db.execute(
-        text("DELETE FROM watchlist_items WHERE ticker = :ticker RETURNING id"),
-        {"ticker": ticker.upper()},
+        text("DELETE FROM watchlist_items WHERE ticker = :ticker AND user_email = :email RETURNING id"),
+        {"ticker": ticker.upper(), "email": user.get("email")},
     )
     await db.commit()
     deleted = result.mappings().first()
     if not deleted:
-        raise HTTPException(status_code=404, detail=f"{ticker} not found in watchlist")
+        raise HTTPException(status_code=404, detail=f"{ticker} not found in your watchlist")
     return {"message": f"Removed {ticker} from watchlist"}
 
 
 @router.patch("/{ticker}")
-async def update_watchlist_item(ticker: str, update: WatchlistItemUpdate, db: AsyncSession = Depends(get_db)):
-    """Update notes or target price for a watchlist item."""
+async def update_watchlist_item(
+    ticker: str,
+    update: WatchlistItemUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Update notes or target price for a watchlist item — own items only."""
     updates = {}
     set_clauses = []
     if update.notes is not None:
@@ -104,27 +159,32 @@ async def update_watchlist_item(ticker: str, update: WatchlistItemUpdate, db: As
         raise HTTPException(status_code=400, detail="No fields to update")
 
     updates["ticker"] = ticker.upper()
+    updates["email"] = user.get("email")
     result = await db.execute(
-        text(f"UPDATE watchlist_items SET {', '.join(set_clauses)} WHERE ticker = :ticker RETURNING id, ticker, notes, target_price"),
+        text(f"UPDATE watchlist_items SET {', '.join(set_clauses)} WHERE ticker = :ticker AND user_email = :email RETURNING id, ticker, notes, target_price"),
         updates,
     )
     await db.commit()
     row = result.mappings().first()
     if not row:
-        raise HTTPException(status_code=404, detail=f"{ticker} not found in watchlist")
+        raise HTTPException(status_code=404, detail=f"{ticker} not found in your watchlist")
     return dict(row)
 
 
 @router.get("/alerts")
-async def get_alerts(db: AsyncSession = Depends(get_db)):
-    """Get alerts for watchlist items near their target price."""
+async def get_alerts(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Get alerts for the authenticated user's watchlist items near their target price."""
     result = await db.execute(
         text("""
             SELECT w.ticker, c.name as company_name, w.target_price
             FROM watchlist_items w
             LEFT JOIN companies c ON w.company_id = c.id
-            WHERE w.target_price IS NOT NULL
-        """)
+            WHERE w.target_price IS NOT NULL AND w.user_email = :email
+        """),
+        {"email": user.get("email")},
     )
     items = [dict(row) for row in result.mappings().all()]
 

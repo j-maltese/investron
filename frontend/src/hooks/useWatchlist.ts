@@ -1,10 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
+import type { WatchlistView } from '@/lib/types'
 
-export function useWatchlist() {
+export function useWatchlist(view?: WatchlistView) {
   return useQuery({
-    queryKey: ['watchlist'],
-    queryFn: () => api.getWatchlist(),
+    queryKey: ['watchlist', view],
+    queryFn: () => api.getWatchlist(view),
     staleTime: 60_000,
   })
 }

@@ -163,7 +163,11 @@ export interface WatchlistItem {
   current_price?: number
   price_change_pct?: number
   added_at: string
+  user_email?: string
+  owner_name?: string
 }
+
+export type WatchlistView = 'all' | 'john' | 'mark'
 
 export interface Alert {
   ticker: string

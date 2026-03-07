@@ -2,7 +2,7 @@ import { supabase } from './supabase'
 import type {
   CompanySearchResult, Company, FinancialStatementsResponse, KeyMetrics,
   GrahamScoreResponse, GrowthMetrics, FilingsResponse, DCFInput, DCFResult,
-  ScenarioModelInput, ScenarioResult, WatchlistItem, Alert, ReleaseNotesResponse,
+  ScenarioModelInput, ScenarioResult, WatchlistItem, Alert, WatchlistView, ReleaseNotesResponse,
   ScreenerResultsResponse, ScannerStatus, ChatRequest, FilingIndexStatus,
   TradingStrategy, TradingPosition, TradingOrder, TradingActivityEvent, TradingPortfolio,
 } from './types'
@@ -82,8 +82,8 @@ export const api = {
     }),
 
   // Watchlist
-  getWatchlist: () =>
-    apiFetch<{ items: WatchlistItem[] }>('/api/watchlist'),
+  getWatchlist: (view?: WatchlistView) =>
+    apiFetch<{ items: WatchlistItem[]; current_user_email: string }>(`/api/watchlist${view ? `?view=${view}` : ''}`),
 
   addToWatchlist: (item: { ticker: string; notes?: string; target_price?: number }) =>
     apiFetch<WatchlistItem>('/api/watchlist', {
