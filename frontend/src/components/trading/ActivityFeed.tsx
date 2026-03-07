@@ -1,25 +1,30 @@
 /**
  * ActivityFeed — enhanced activity log with filter pills, date range picker,
- * expandable detail rows, and load-more pagination.
+ * text search, expandable detail rows, and infinite-scroll pagination.
  *
  * Two rendering modes:
  * - **compact** (Overview tab): simple read-only list, events passed in as props,
  *   no filters/expand/pagination. Just a quick glance at recent events.
  * - **full** (Activity tab): self-managing component that calls useActivityLog
- *   internally, renders filter pills, date range controls, expandable JSONB
- *   details, and a "Load more" button for pagination.
+ *   internally, renders filter pills, date range controls, text search bar,
+ *   expandable JSONB details, and infinite scroll for pagination.
+ *
+ * Date range filtering is deferred — the user sets From/To dates, then clicks
+ * a Search button to apply. This avoids constant re-fetches while the user
+ * is still selecting dates. Auto-refetch is also disabled when any filter
+ * (dates or search text) is active.
  *
  * Filter pills group event types into categories (Decisions, Executions, Blocked,
  * Errors) and filter client-side on the currently loaded events. Date range
- * filtering goes through the API so the database handles the time window.
+ * and text search go through the API so the database handles them.
  */
 
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import {
   ArrowDownCircle, ArrowUpCircle, AlertTriangle, Play, Square,
   RotateCcw, CircleDot, ShieldAlert, Settings, Crosshair, RefreshCw,
   XCircle, Timer, Clock, Ban, ArrowRightCircle, ChevronDown, ChevronRight,
-  Loader2,
+  Loader2, Search,
 } from 'lucide-react'
 import DatePicker from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
@@ -28,7 +33,7 @@ import type { TradingActivityEvent } from '@/lib/types'
 import { formatDateTime } from '@/lib/dateUtils'
 
 // ---------------------------------------------------------------------------
-// Event type → icon + color mapping
+// Event type -> icon + color mapping
 // Covers Simple Stock events (order_placed, signal, etc.) and Wheel events
 // (put_sold, assignment, hard_stop, blocked_*, etc.).
 // ---------------------------------------------------------------------------
@@ -198,6 +203,9 @@ function formatDetailValue(value: unknown): string {
   return String(value)
 }
 
+// Page size for infinite scroll
+const PAGE_SIZE = 100
+
 // ---------------------------------------------------------------------------
 // ActivityFeed component
 // ---------------------------------------------------------------------------
@@ -219,22 +227,43 @@ export function ActivityFeed({
   totalCount: externalTotal,
   strategyId,
 }: ActivityFeedProps) {
-  // -- Full-mode state (filter pills, date range, pagination, expanded rows) --
+  // -- Full-mode state --
   const [filter, setFilter] = useState<FilterCategory>('all')
-  const [dateFrom, setDateFrom] = useState<Date | null>(null)
-  const [dateTo, setDateTo] = useState<Date | null>(null)
-  const [loadedCount, setLoadedCount] = useState(50)
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
+
+  // Date picker state is local — only committed to the query on Search click
+  const [dateFromInput, setDateFromInput] = useState<Date | null>(null)
+  const [dateToInput, setDateToInput] = useState<Date | null>(null)
+
+  // Committed filter state — what's actually sent to the API
+  const [committedDateFrom, setCommittedDateFrom] = useState<Date | null>(null)
+  const [committedDateTo, setCommittedDateTo] = useState<Date | null>(null)
+  const [committedSearch, setCommittedSearch] = useState<string>('')
+
+  // Text search input (local, committed on Enter or Search click)
+  const [searchInput, setSearchInput] = useState('')
+
+  // Infinite scroll: how many items to load
+  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE)
+
+  // Sentinel ref for IntersectionObserver-based infinite scroll
+  const sentinelRef = useRef<HTMLDivElement>(null)
+
+  // Date validation: end before start
+  const dateError = dateFromInput && dateToInput && dateToInput < dateFromInput
+    ? 'End date must be after start date'
+    : null
 
   // Fetch data internally in full mode; disabled in compact mode to avoid
   // duplicate fetches (parent already supplies events via props).
-  const { data, isLoading } = useActivityLog(
+  const { data, isLoading, isFetching } = useActivityLog(
     compact
       ? { enabled: false }
       : {
           strategyId,
-          dateFrom: toAPIDatetime(dateFrom),
-          dateTo: toAPIDatetime(dateTo),
+          dateFrom: toAPIDatetime(committedDateFrom),
+          dateTo: toAPIDatetime(committedDateTo),
+          search: committedSearch || undefined,
           limit: loadedCount,
         }
   )
@@ -249,6 +278,27 @@ export function ActivityFeed({
     [allEvents, filter, compact]
   )
 
+  // -- Infinite scroll via IntersectionObserver --
+  const hasMore = !compact && totalCount > allEvents.length
+  useEffect(() => {
+    if (compact || !hasMore) return
+    const sentinel = sentinelRef.current
+    if (!sentinel) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        // When the sentinel scrolls into view and we're not already fetching, load more
+        if (entries[0]?.isIntersecting && !isFetching) {
+          setLoadedCount((prev) => prev + PAGE_SIZE)
+        }
+      },
+      { rootMargin: '200px' }
+    )
+
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [compact, hasMore, isFetching])
+
   // -- Callbacks --
 
   const toggleExpanded = useCallback((id: number) => {
@@ -260,22 +310,40 @@ export function ActivityFeed({
     })
   }, [])
 
-  const handleLoadMore = useCallback(() => {
-    setLoadedCount((prev) => prev + 50)
-  }, [])
+  /** Commit date range and search text to the query — triggered by Search button or Enter */
+  const applyFilters = useCallback(() => {
+    if (dateError) return
+    setCommittedDateFrom(dateFromInput)
+    setCommittedDateTo(dateToInput)
+    setCommittedSearch(searchInput)
+    setLoadedCount(PAGE_SIZE) // Reset pagination on new search
+  }, [dateFromInput, dateToInput, searchInput, dateError])
 
-  const clearDateRange = useCallback(() => {
-    setDateFrom(null)
-    setDateTo(null)
+  const clearFilters = useCallback(() => {
+    setDateFromInput(null)
+    setDateToInput(null)
+    setSearchInput('')
+    setCommittedDateFrom(null)
+    setCommittedDateTo(null)
+    setCommittedSearch('')
+    setLoadedCount(PAGE_SIZE)
   }, [])
 
   const applyPreset = useCallback((preset: 'today' | 'week' | 'month') => {
-    setDateFrom(getPresetDate(preset))
-    setDateTo(null) // No end date = up to now
-  }, [])
+    const from = getPresetDate(preset)
+    setDateFromInput(from)
+    setDateToInput(null)
+    // Auto-commit presets since both values are known
+    setCommittedDateFrom(from)
+    setCommittedDateTo(null)
+    setCommittedSearch(searchInput)
+    setLoadedCount(PAGE_SIZE)
+  }, [searchInput])
 
-  // -- Loading state (full mode only) --
-  if (!compact && isLoading) {
+  const hasAnyFilter = !!(committedDateFrom || committedDateTo || committedSearch)
+
+  // -- Loading state (full mode only — initial load, not background refetch) --
+  if (!compact && isLoading && !data) {
     return (
       <div className="card flex items-center justify-center py-12">
         <Loader2 className="w-5 h-5 animate-spin text-[var(--muted-foreground)]" />
@@ -289,13 +357,18 @@ export function ActivityFeed({
       <div className={compact ? '' : 'space-y-3'}>
         {!compact && <FilterBar filter={filter} setFilter={setFilter} />}
         {!compact && (
-          <DateRangeBar
-            dateFrom={dateFrom}
-            dateTo={dateTo}
-            setDateFrom={setDateFrom}
-            setDateTo={setDateTo}
-            clearDateRange={clearDateRange}
+          <SearchAndDateBar
+            dateFrom={dateFromInput}
+            dateTo={dateToInput}
+            setDateFrom={setDateFromInput}
+            setDateTo={setDateToInput}
+            searchInput={searchInput}
+            setSearchInput={setSearchInput}
+            applyFilters={applyFilters}
+            clearFilters={clearFilters}
             applyPreset={applyPreset}
+            hasAnyFilter={hasAnyFilter}
+            dateError={dateError}
           />
         )}
         <div className="card text-center py-8 text-[var(--muted-foreground)]">
@@ -303,8 +376,9 @@ export function ActivityFeed({
           {filter !== 'all'
             ? ` matching "${FILTER_PILLS.find((p) => p.key === filter)?.label}"`
             : ''}
-          {dateFrom ? ` from ${dateFrom.toLocaleString()}` : ''}
-          {dateTo ? ` to ${dateTo.toLocaleString()}` : ''}
+          {committedDateFrom ? ` from ${committedDateFrom.toLocaleString()}` : ''}
+          {committedDateTo ? ` to ${committedDateTo.toLocaleString()}` : ''}
+          {committedSearch ? ` containing "${committedSearch}"` : ''}
           .
         </div>
       </div>
@@ -316,20 +390,25 @@ export function ActivityFeed({
       {/* Filter pills — only in full mode */}
       {!compact && <FilterBar filter={filter} setFilter={setFilter} />}
 
-      {/* Date range controls — only in full mode */}
+      {/* Search bar + date range controls — only in full mode */}
       {!compact && (
-        <DateRangeBar
-          dateFrom={dateFrom}
-          dateTo={dateTo}
-          setDateFrom={setDateFrom}
-          setDateTo={setDateTo}
-          clearDateRange={clearDateRange}
+        <SearchAndDateBar
+          dateFrom={dateFromInput}
+          dateTo={dateToInput}
+          setDateFrom={setDateFromInput}
+          setDateTo={setDateToInput}
+          searchInput={searchInput}
+          setSearchInput={setSearchInput}
+          applyFilters={applyFilters}
+          clearFilters={clearFilters}
           applyPreset={applyPreset}
+          hasAnyFilter={hasAnyFilter}
+          dateError={dateError}
         />
       )}
 
       {/* Event list */}
-      <div className="card space-y-0.5 max-h-[calc(100vh-280px)] overflow-y-auto">
+      <div className="card space-y-0.5 max-h-[calc(100vh-320px)] overflow-y-auto">
         {filteredEvents.map((event) => {
           const iconConfig = getIconConfig(event.event_type)
           const Icon = iconConfig.icon
@@ -395,15 +474,23 @@ export function ActivityFeed({
           )
         })}
 
-        {/* Load more button — full mode, when API has more events than loaded */}
-        {!compact && totalCount > allEvents.length && (
-          <div className="pt-3 pb-1 text-center">
-            <button
-              onClick={handleLoadMore}
-              className="text-xs text-[var(--accent)] hover:underline"
-            >
-              Load more ({allEvents.length} of {totalCount} events)
-            </button>
+        {/* Infinite scroll sentinel — triggers loading more when scrolled into view */}
+        {hasMore && (
+          <div ref={sentinelRef} className="flex items-center justify-center py-3">
+            {isFetching ? (
+              <Loader2 className="w-4 h-4 animate-spin text-[var(--muted-foreground)]" />
+            ) : (
+              <span className="text-xs text-[var(--muted-foreground)]">
+                {allEvents.length} of {totalCount} events
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Show count when all events are loaded */}
+        {!hasMore && !compact && allEvents.length > 0 && (
+          <div className="text-center text-xs text-[var(--muted-foreground)] py-2">
+            {totalCount} event{totalCount !== 1 ? 's' : ''}
           </div>
         )}
 
@@ -449,86 +536,127 @@ function FilterBar({
 }
 
 // ---------------------------------------------------------------------------
-// DateRangeBar — From/To date inputs + quick preset links
+// SearchAndDateBar — text search + From/To date pickers + Search button
+// Dates are local state until the user clicks Search (deferred query).
 // ---------------------------------------------------------------------------
 
-function DateRangeBar({
+function SearchAndDateBar({
   dateFrom,
   dateTo,
   setDateFrom,
   setDateTo,
-  clearDateRange,
+  searchInput,
+  setSearchInput,
+  applyFilters,
+  clearFilters,
   applyPreset,
+  hasAnyFilter,
+  dateError,
 }: {
   dateFrom: Date | null
   dateTo: Date | null
   setDateFrom: (v: Date | null) => void
   setDateTo: (v: Date | null) => void
-  clearDateRange: () => void
+  searchInput: string
+  setSearchInput: (v: string) => void
+  applyFilters: () => void
+  clearFilters: () => void
   applyPreset: (p: 'today' | 'week' | 'month') => void
+  hasAnyFilter: boolean
+  dateError: string | null
 }) {
   return (
-    <div className="flex items-center gap-3 flex-wrap text-xs">
-      <label className="flex items-center gap-1.5 text-[var(--muted-foreground)]">
-        From
-        <DatePicker
-          selected={dateFrom}
-          onChange={(date: Date | null) => setDateFrom(date)}
-          showTimeSelect
-          timeIntervals={15}
-          dateFormat="MMM d, yyyy h:mm aa"
-          placeholderText="Select start..."
-          maxDate={dateTo || undefined}
-          isClearable
-          className="bg-[var(--muted)] border border-[var(--border)] rounded px-2 py-1 text-[var(--foreground)] text-xs w-[170px]"
-          calendarClassName="investron-datepicker"
-          popperPlacement="bottom-start"
-        />
-      </label>
-      <label className="flex items-center gap-1.5 text-[var(--muted-foreground)]">
-        To
-        <DatePicker
-          selected={dateTo}
-          onChange={(date: Date | null) => setDateTo(date)}
-          showTimeSelect
-          timeIntervals={15}
-          dateFormat="MMM d, yyyy h:mm aa"
-          placeholderText="Select end..."
-          minDate={dateFrom || undefined}
-          isClearable
-          className="bg-[var(--muted)] border border-[var(--border)] rounded px-2 py-1 text-[var(--foreground)] text-xs w-[170px]"
-          calendarClassName="investron-datepicker"
-          popperPlacement="bottom-start"
-        />
-      </label>
-      {/* Quick preset links */}
-      <span className="text-[var(--border)]">|</span>
-      <button
-        onClick={() => applyPreset('today')}
-        className="text-[var(--accent)] hover:underline"
-      >
-        Today
-      </button>
-      <button
-        onClick={() => applyPreset('week')}
-        className="text-[var(--accent)] hover:underline"
-      >
-        This Week
-      </button>
-      <button
-        onClick={() => applyPreset('month')}
-        className="text-[var(--accent)] hover:underline"
-      >
-        This Month
-      </button>
-      {/* Clear button — only shown when a date filter is active */}
-      {(dateFrom || dateTo) && (
+    <div className="space-y-2">
+      {/* Search bar + action button row */}
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--muted-foreground)]" />
+          <input
+            type="text"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
+            placeholder="Search logs..."
+            className="w-full bg-[var(--muted)] border border-[var(--border)] rounded px-2 py-1.5 pl-8 text-[var(--foreground)] text-xs placeholder:text-[var(--muted-foreground)]"
+          />
+        </div>
         <button
-          onClick={clearDateRange}
-          className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+          onClick={applyFilters}
+          disabled={!!dateError}
+          className="px-3 py-1.5 text-xs rounded bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          Clear
+          Search
         </button>
+        {hasAnyFilter && (
+          <button
+            onClick={clearFilters}
+            className="px-2 py-1.5 text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+          >
+            Clear All
+          </button>
+        )}
+      </div>
+
+      {/* Date range row */}
+      <div className="flex items-center gap-3 flex-wrap text-xs">
+        <label className="flex items-center gap-1.5 text-[var(--muted-foreground)]">
+          From
+          <DatePicker
+            selected={dateFrom}
+            onChange={(date: Date | null) => setDateFrom(date)}
+            showTimeSelect
+            timeIntervals={15}
+            dateFormat="MMM d, yyyy h:mm aa"
+            placeholderText="Select start..."
+            isClearable
+            className="bg-[var(--muted)] border border-[var(--border)] rounded px-2 py-1 text-[var(--foreground)] text-xs w-[170px]"
+            calendarClassName="investron-datepicker"
+            popperPlacement="bottom-start"
+          />
+        </label>
+        <label className="flex items-center gap-1.5 text-[var(--muted-foreground)]">
+          To
+          <DatePicker
+            selected={dateTo}
+            onChange={(date: Date | null) => setDateTo(date)}
+            showTimeSelect
+            timeIntervals={15}
+            dateFormat="MMM d, yyyy h:mm aa"
+            placeholderText="Select end..."
+            isClearable
+            className="bg-[var(--muted)] border border-[var(--border)] rounded px-2 py-1 text-[var(--foreground)] text-xs w-[170px]"
+            calendarClassName="investron-datepicker"
+            popperPlacement="bottom-start"
+          />
+        </label>
+        {/* Quick preset links */}
+        <span className="text-[var(--border)]">|</span>
+        <button
+          onClick={() => applyPreset('today')}
+          className="text-[var(--accent)] hover:underline"
+        >
+          Today
+        </button>
+        <button
+          onClick={() => applyPreset('week')}
+          className="text-[var(--accent)] hover:underline"
+        >
+          This Week
+        </button>
+        <button
+          onClick={() => applyPreset('month')}
+          className="text-[var(--accent)] hover:underline"
+        >
+          This Month
+        </button>
+      </div>
+
+      {/* Date validation warning */}
+      {dateError && (
+        <div className="text-xs text-red-400 flex items-center gap-1.5">
+          <AlertTriangle className="w-3.5 h-3.5" />
+          {dateError}
+        </div>
       )}
     </div>
   )

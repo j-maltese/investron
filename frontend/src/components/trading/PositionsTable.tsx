@@ -18,6 +18,39 @@ const STRATEGY_BADGES: Record<string, { label: string; color: string }> = {
   wheel: { label: 'WH', color: 'bg-amber-500/15 text-amber-400' },
 }
 
+// ---------------------------------------------------------------------------
+// Header tooltip definitions — brief descriptions for every column
+// ---------------------------------------------------------------------------
+
+const HEADER_TOOLTIPS: Record<string, string> = {
+  ticker: 'Stock ticker symbol',
+  type: 'Stock position or option type (PUT/CALL)',
+  strike: 'Option strike price / current underlying stock price (updated ~15 min during market hours)',
+  premium: 'Total premium collected = entry price x 100 shares x contracts',
+  exp: 'Option expiration date',
+  qty: 'Number of shares (stocks) or contracts (options)',
+  entry: 'Per-share fill price (stocks) or per-share premium received (options). Blank = order not yet filled.',
+  value: 'Current mark-to-market value (updated ~15 min during market hours)',
+  pnl: 'Unrealized gain/loss (open positions) or realized gain/loss (closed)',
+  phase: 'Wheel lifecycle: Selling Puts \u2192 Assigned \u2192 Selling Calls \u2192 Called Away',
+  status: 'Position status: open, closed, assigned, or expired',
+  opened: 'Date the position was opened',
+}
+
+/** Tooltip-enabled table header cell */
+function TH({ id, children, className = '' }: { id: string; children: React.ReactNode; className?: string }) {
+  return (
+    <th
+      className={`px-3 py-2.5 font-medium ${className}`}
+      title={HEADER_TOOLTIPS[id]}
+    >
+      <span className="border-b border-dotted border-[var(--muted-foreground)] cursor-help">
+        {children}
+      </span>
+    </th>
+  )
+}
+
 interface PositionsTableProps {
   positions: TradingPosition[]
   totalCount: number
@@ -39,18 +72,18 @@ export function PositionsTable({ positions, totalCount }: PositionsTableProps) {
           <thead>
             <tr className="border-b border-[var(--border)] text-[var(--muted-foreground)] text-xs">
               <th className="text-left px-3 py-2.5 font-medium w-8"></th>
-              <th className="text-left px-3 py-2.5 font-medium">Ticker</th>
-              <th className="text-left px-3 py-2.5 font-medium">Type</th>
-              <th className="text-right px-3 py-2.5 font-medium">Strike</th>
-              <th className="text-right px-3 py-2.5 font-medium">Premium</th>
-              <th className="text-left px-3 py-2.5 font-medium">Exp</th>
-              <th className="text-right px-3 py-2.5 font-medium">Qty</th>
-              <th className="text-right px-3 py-2.5 font-medium">Entry</th>
-              <th className="text-right px-3 py-2.5 font-medium">Value</th>
-              <th className="text-right px-3 py-2.5 font-medium">P&L</th>
-              <th className="text-left px-3 py-2.5 font-medium">Phase</th>
-              <th className="text-left px-3 py-2.5 font-medium">Status</th>
-              <th className="text-left px-3 py-2.5 font-medium">Opened</th>
+              <TH id="ticker" className="text-left">Ticker</TH>
+              <TH id="type" className="text-left">Type</TH>
+              <TH id="strike" className="text-right">Strike / Current</TH>
+              <TH id="premium" className="text-right">Premium</TH>
+              <TH id="exp" className="text-left">Exp</TH>
+              <TH id="qty" className="text-right">Qty</TH>
+              <TH id="entry" className="text-right">Entry</TH>
+              <TH id="value" className="text-right">Value</TH>
+              <TH id="pnl" className="text-right">P&L</TH>
+              <TH id="phase" className="text-left">Phase</TH>
+              <TH id="status" className="text-left">Status</TH>
+              <TH id="opened" className="text-left">Opened</TH>
             </tr>
           </thead>
           <tbody>
@@ -60,6 +93,9 @@ export function PositionsTable({ positions, totalCount }: PositionsTableProps) {
               const wheelPhase = pos.wheel_phase ? WHEEL_PHASE_LABELS[pos.wheel_phase] : null
               const badge = STRATEGY_BADGES[pos.strategy_id]
               const isOption = pos.asset_type === 'option'
+
+              // Pending = option position with no fill yet (entry price is null/zero)
+              const isPending = isOption && !pos.avg_entry_price
 
               return (
                 <tr
@@ -90,9 +126,25 @@ export function PositionsTable({ positions, totalCount }: PositionsTableProps) {
                   <td className="px-3 py-2.5 text-[var(--muted-foreground)]">
                     {isOption ? pos.option_type?.toUpperCase() : 'Stock'}
                   </td>
-                  {/* Strike — options only */}
+                  {/* Strike / Current — shows strike price with underlying stock price for context */}
                   <td className="px-3 py-2.5 text-right font-mono">
-                    {isOption && pos.strike_price ? `$${pos.strike_price}` : '-'}
+                    {isOption && pos.strike_price ? (
+                      <span title="Strike price / current underlying stock price">
+                        ${pos.strike_price}
+                        {pos.underlying_price != null && (
+                          <span className="text-[var(--muted-foreground)]">
+                            {' / '}${pos.underlying_price.toFixed(2)}
+                          </span>
+                        )}
+                      </span>
+                    ) : pos.asset_type === 'stock' && pos.underlying_price != null ? (
+                      <span
+                        className="text-[var(--muted-foreground)]"
+                        title="Current stock price"
+                      >
+                        ${pos.underlying_price.toFixed(2)}
+                      </span>
+                    ) : '-'}
                   </td>
                   {/* Premium — cost_basis for sold options represents premium collected */}
                   <td className="px-3 py-2.5 text-right font-mono">
@@ -106,7 +158,16 @@ export function PositionsTable({ positions, totalCount }: PositionsTableProps) {
                     {isOption ? pos.contracts : pos.quantity}
                   </td>
                   <td className="px-3 py-2.5 text-right font-mono">
-                    {formatMoney(pos.avg_entry_price)}
+                    {isPending ? (
+                      <span
+                        className="text-[var(--muted-foreground)] italic"
+                        title="Order not yet filled — entry price will update when Alpaca confirms the fill"
+                      >
+                        pending
+                      </span>
+                    ) : (
+                      formatMoney(pos.avg_entry_price)
+                    )}
                   </td>
                   <td className="px-3 py-2.5 text-right font-mono">
                     {formatMoney(pos.current_value)}
@@ -122,14 +183,24 @@ export function PositionsTable({ positions, totalCount }: PositionsTableProps) {
                     )}
                   </td>
                   <td className="px-3 py-2.5">
-                    <span className={`text-xs px-1.5 py-0.5 rounded ${
-                      pos.status === 'open' ? 'bg-emerald-500/15 text-emerald-400' :
-                      pos.status === 'closed' ? 'bg-[var(--muted)] text-[var(--muted-foreground)]' :
-                      pos.status === 'assigned' ? 'bg-amber-500/15 text-amber-400' :
-                      'bg-[var(--muted)] text-[var(--muted-foreground)]'
-                    }`}>
-                      {pos.status}
-                    </span>
+                    {isPending ? (
+                      // Orange outline badge for unfilled option positions
+                      <span
+                        className="text-xs px-1.5 py-0.5 rounded border border-amber-400 text-amber-400"
+                        title="Order submitted but not yet filled by exchange"
+                      >
+                        pending
+                      </span>
+                    ) : (
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${
+                        pos.status === 'open' ? 'bg-emerald-500/15 text-emerald-400' :
+                        pos.status === 'closed' ? 'bg-[var(--muted)] text-[var(--muted-foreground)]' :
+                        pos.status === 'assigned' ? 'bg-amber-500/15 text-amber-400' :
+                        'bg-[var(--muted)] text-[var(--muted-foreground)]'
+                      }`}>
+                        {pos.status}
+                      </span>
+                    )}
                   </td>
                   <td className="px-3 py-2.5 text-xs text-[var(--muted-foreground)]">
                     {formatDate(pos.opened_at)}

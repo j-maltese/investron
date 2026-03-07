@@ -292,6 +292,7 @@ export interface TradingPosition {
   current_value?: number
   realized_pnl: number
   unrealized_pnl: number
+  underlying_price?: number
   status: 'open' | 'closed' | 'assigned' | 'expired'
   opened_at: string
   closed_at?: string

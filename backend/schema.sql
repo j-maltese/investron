@@ -275,6 +275,9 @@ CREATE TABLE IF NOT EXISTS trading_positions (
     realized_pnl DECIMAL(12,2) DEFAULT 0,
     unrealized_pnl DECIMAL(12,2) DEFAULT 0,
 
+    -- Live market data (updated each trading cycle, ~15 min during market hours)
+    underlying_price DECIMAL(12,4),   -- Current stock price for the underlying ticker
+
     status VARCHAR(20) NOT NULL DEFAULT 'open',  -- open | closed | assigned | expired
     opened_at TIMESTAMPTZ DEFAULT NOW(),
     closed_at TIMESTAMPTZ,
@@ -408,3 +411,6 @@ SET
         "max_per_sector": 2
     }'::jsonb
 WHERE id = 'wheel';
+
+-- Add underlying_price column to positions (stores current stock price for display)
+ALTER TABLE trading_positions ADD COLUMN IF NOT EXISTS underlying_price DECIMAL(12,4);

@@ -350,6 +350,7 @@ async def get_activity_log(
     event_type: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    search: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[dict], int]:
@@ -360,6 +361,7 @@ async def get_activity_log(
       - event_type: exact match (e.g., 'order_filled') or prefix match for
         category filters (e.g., 'blocked' matches all blocked_* events)
       - date_from / date_to: ISO date strings for date range filtering
+      - search: case-insensitive substring match on message, ticker, or event_type
     """
     where_parts = []
     params: dict = {"limit": limit, "offset": offset}
@@ -390,6 +392,13 @@ async def get_activity_log(
         else:
             where_parts.append("created_at < (:date_to::date + interval '1 day')")
         params["date_to"] = date_to
+
+    if search:
+        # Search across message, ticker, and event_type columns
+        where_parts.append(
+            "(message ILIKE :search OR COALESCE(ticker, '') ILIKE :search OR event_type ILIKE :search)"
+        )
+        params["search"] = f"%{search}%"
 
     where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
 

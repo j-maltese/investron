@@ -316,18 +316,76 @@ async def _get_position_by_id(db: AsyncSession, position_id: int) -> dict | None
 
 
 async def _get_latest_price(ticker: str) -> float | None:
-    """Get latest price from Alpaca market data."""
+    """Get latest price from Alpaca market data.
+
+    Returns the last trade price when available (actual executed transaction),
+    falling back to bid/ask midpoint if no recent trade exists.
+    """
+    result = await _get_price_details(ticker)
+    return result["price"] if result else None
+
+
+async def _get_price_details(ticker: str) -> dict | None:
+    """Fetch detailed price data from Alpaca for audit-quality logging.
+
+    Returns dict with:
+      - price: best available price (last trade preferred, then bid/ask midpoint)
+      - source: "last_trade" | "bid_ask_midpoint" | "ask_only"
+      - bid, ask, last_trade: raw values for logging
+    Returns None if all price sources fail.
+    """
     try:
         client = alpaca_client.get_stock_data_client()
+
+        # Try last trade first — represents an actual executed transaction,
+        # more reliable than bid/ask which can have momentary wide spreads
+        from alpaca.data.requests import StockLatestTradeRequest
+        trade_req = StockLatestTradeRequest(symbol_or_symbols=ticker)
+        trades = client.get_stock_latest_trade(trade_req)
+        last_trade = None
+        if ticker in trades and trades[ticker].price:
+            last_trade = float(trades[ticker].price)
+
+        # Also fetch quote for bid/ask context (useful for logging)
         from alpaca.data.requests import StockLatestQuoteRequest
-        request = StockLatestQuoteRequest(symbol_or_symbols=ticker)
-        quotes = client.get_stock_latest_quote(request)
+        quote_req = StockLatestQuoteRequest(symbol_or_symbols=ticker)
+        quotes = client.get_stock_latest_quote(quote_req)
+        bid, ask = None, None
         if ticker in quotes:
             q = quotes[ticker]
-            # Use midpoint of bid/ask, fallback to ask
-            if q.bid_price and q.ask_price:
-                return float(q.bid_price + q.ask_price) / 2
-            return float(q.ask_price) if q.ask_price else None
+            bid = float(q.bid_price) if q.bid_price else None
+            ask = float(q.ask_price) if q.ask_price else None
+
+        # Prefer last trade price — it's an actual transaction
+        if last_trade:
+            return {
+                "price": last_trade,
+                "source": "last_trade",
+                "last_trade": last_trade,
+                "bid": bid,
+                "ask": ask,
+            }
+
+        # Fall back to bid/ask midpoint
+        if bid and ask:
+            return {
+                "price": (bid + ask) / 2,
+                "source": "bid_ask_midpoint",
+                "last_trade": None,
+                "bid": bid,
+                "ask": ask,
+            }
+
+        # Last resort: ask price only
+        if ask:
+            return {
+                "price": ask,
+                "source": "ask_only",
+                "last_trade": None,
+                "bid": bid,
+                "ask": ask,
+            }
+
     except Exception as e:
         logger.warning("Failed to get price for %s: %s", ticker, e)
     return None
@@ -366,31 +424,73 @@ async def run_simple_stock_cycle(db: AsyncSession, strategy: dict) -> None:
         if entry_price <= 0:
             continue
 
-        current_price = await _get_latest_price(ticker)
-        if current_price is None:
+        price_data = await _get_price_details(ticker)
+        if not price_data:
             continue
+        current_price = price_data["price"]
 
         qty = float(pos.get("quantity", 0))
         change_pct = ((current_price - entry_price) / entry_price) * 100
 
-        # Update unrealized P&L
+        # Update unrealized P&L and current stock price
         unrealized = round((current_price - entry_price) * qty, 2)
         await trading_db.update_position(
             db, pos["id"],
             current_value=round(current_price * qty, 2),
             unrealized_pnl=unrealized,
+            underlying_price=round(current_price, 4),
         )
 
-        # Check stop-loss
+        # Build price context dict for audit logging — included in every sell decision
+        price_ctx = {
+            "price_used": current_price,
+            "price_source": price_data["source"],
+            "bid": price_data.get("bid"),
+            "ask": price_data.get("ask"),
+            "last_trade": price_data.get("last_trade"),
+            "entry_price": entry_price,
+            "change_pct": round(change_pct, 2),
+        }
+
+        # Check stop-loss — re-fetch to confirm before executing.
+        # A single bad quote shouldn't trigger an irreversible sell.
         if change_pct <= -stop_loss_pct:
-            logger.info("Stop-loss triggered for %s (%.1f%%)", ticker, change_pct)
-            await _execute_sell(db, strategy_id, pos, qty, "stop_loss", current_price)
-            continue
+            logger.info("Stop-loss initial trigger for %s (%.1f%%), re-fetching to confirm...", ticker, change_pct)
+            confirm_data = await _get_price_details(ticker)
+            if confirm_data:
+                confirm_price = confirm_data["price"]
+                confirm_pct = ((confirm_price - entry_price) / entry_price) * 100
+                price_ctx["confirm_price"] = confirm_price
+                price_ctx["confirm_source"] = confirm_data["source"]
+                price_ctx["confirm_change_pct"] = round(confirm_pct, 2)
+
+                if confirm_pct <= -stop_loss_pct:
+                    # Confirmed — use the confirmation price for the sell
+                    logger.info("Stop-loss CONFIRMED for %s (%.1f%% on re-fetch)", ticker, confirm_pct)
+                    price_ctx["threshold"] = -stop_loss_pct
+                    await _execute_sell(db, strategy_id, pos, qty, "stop_loss", confirm_price, price_context=price_ctx)
+                    continue
+                else:
+                    # First fetch was a bad read — log it but don't sell
+                    logger.warning(
+                        "Stop-loss NOT confirmed for %s: initial=%.1f%% but re-fetch=%.1f%%, skipping",
+                        ticker, change_pct, confirm_pct,
+                    )
+                    await trading_db.log_activity(
+                        db, strategy_id, "blocked_stop_loss",
+                        f"Stop-loss for {ticker} not confirmed on re-fetch: "
+                        f"initial {change_pct:.1f}% → re-fetch {confirm_pct:.1f}% "
+                        f"(threshold: {stop_loss_pct:.0f}%)",
+                        ticker=ticker,
+                        details=price_ctx,
+                    )
+                    continue
 
         # Check take-profit
         if change_pct >= take_profit_pct:
             logger.info("Take-profit triggered for %s (%.1f%%)", ticker, change_pct)
-            await _execute_sell(db, strategy_id, pos, qty, "take_profit", current_price)
+            price_ctx["threshold"] = take_profit_pct
+            await _execute_sell(db, strategy_id, pos, qty, "take_profit", current_price, price_context=price_ctx)
             continue
 
         # AI sell check (less frequent — only if AI is enabled)
@@ -398,7 +498,7 @@ async def run_simple_stock_cycle(db: AsyncSession, strategy: dict) -> None:
             signal = await _get_ai_trade_signal(db, ticker, "hold or sell", capital)
             if signal.get("action") == "sell" and signal.get("confidence", 0) >= min_ai_confidence:
                 logger.info("AI sell signal for %s (conf=%.2f)", ticker, signal["confidence"])
-                await _execute_sell(db, strategy_id, pos, qty, "ai_signal", current_price, signal)
+                await _execute_sell(db, strategy_id, pos, qty, "ai_signal", current_price, ai_signal=signal, price_context=price_ctx)
                 continue
 
     # --- Step 3: Look for new buy opportunities ---
@@ -536,8 +636,16 @@ async def _execute_sell(
     reason: str,
     current_price: float,
     ai_signal: dict | None = None,
+    price_context: dict | None = None,
 ) -> None:
-    """Submit a sell order for an existing position."""
+    """Submit a sell order for an existing position.
+
+    Args:
+        price_context: Audit dict with price_used, price_source, bid, ask,
+            last_trade, entry_price, change_pct, threshold — logged in activity
+            so every sell decision can be traced back to the exact data that
+            triggered it.
+    """
     ticker = position["ticker"]
     try:
         order_result = await alpaca_client.submit_stock_order(
@@ -561,11 +669,26 @@ async def _execute_sell(
         entry = float(position.get("avg_entry_price", 0))
         pnl = round((current_price - entry) * qty, 2)
 
+        # Merge price audit context into the activity details so every sell
+        # decision is fully traceable: what price was used, where it came from,
+        # what threshold triggered it, and the raw bid/ask/trade data.
+        details: dict = {
+            "shares": qty, "price": current_price, "reason": reason, "pnl": pnl,
+        }
+        if price_context:
+            details["price_audit"] = price_context
+        if ai_signal:
+            details["ai_signal"] = ai_signal
+
         await trading_db.log_activity(
             db, strategy_id, "order_placed",
+            f"SELL {ticker} x{qty:.0f} @ ~${current_price:.2f} ({reason}, "
+            f"change: {price_context['change_pct']:.1f}%, "
+            f"source: {price_context['price_source']})"
+            if price_context else
             f"SELL {ticker} x{qty:.0f} @ ~${current_price:.2f} ({reason}, P&L: ${pnl:+.2f})",
             ticker=ticker,
-            details={"shares": qty, "price": current_price, "reason": reason, "pnl": pnl},
+            details=details,
         )
 
         logger.info("Sell order placed: %s x%.0f @ ~$%.2f (%s)", ticker, qty, current_price, reason)
