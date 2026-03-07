@@ -1,0 +1,22 @@
+{
+  "version": "0.1.36",
+  "date": "2026-03-07",
+  "title": "v0.1.36",
+  "summary": "Release 0.1.36 includes 1 enhancement, 1 bug fix.",
+  "sections": [
+    {
+      "type": "bug_fix",
+      "label": "Bug Fixes",
+      "items": [
+        "Attempts to fix activity logging issues"
+      ]
+    },
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Improves festching logs server-side"
+      ]
+    }
+  ]
+}
