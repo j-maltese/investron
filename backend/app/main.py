@@ -47,6 +47,7 @@ async def _run_migrations():
         return
     try:
         async with _db.async_session_factory() as db:
+            # Scanner status columns
             await db.execute(text(
                 "ALTER TABLE scanner_status "
                 "ADD COLUMN IF NOT EXISTS tickers_no_data INT DEFAULT 0"
@@ -59,6 +60,44 @@ async def _run_migrations():
                 "ALTER TABLE scanner_status "
                 "ADD COLUMN IF NOT EXISTS tickers_error INT DEFAULT 0"
             ))
+
+            # Trading: underlying_price for position display
+            await db.execute(text(
+                "ALTER TABLE trading_positions "
+                "ADD COLUMN IF NOT EXISTS underlying_price DECIMAL(12,4)"
+            ))
+
+            # Per-user watchlists: user_email column + unique constraint swap
+            await db.execute(text(
+                "ALTER TABLE watchlist_items "
+                "ADD COLUMN IF NOT EXISTS user_email VARCHAR(255)"
+            ))
+            await db.execute(text(
+                "ALTER TABLE watchlist_items "
+                "DROP CONSTRAINT IF EXISTS watchlist_items_ticker_key"
+            ))
+            await db.execute(text("""
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint
+                        WHERE conname = 'watchlist_items_ticker_user_email_key'
+                    ) THEN
+                        ALTER TABLE watchlist_items
+                        ADD CONSTRAINT watchlist_items_ticker_user_email_key
+                        UNIQUE (ticker, user_email);
+                    END IF;
+                END $$
+            """))
+            # Tag any untagged watchlist items (first deploy only)
+            await db.execute(text(
+                "UPDATE watchlist_items SET user_email = 'mmalt01@gmail.com' "
+                "WHERE ticker IN ('TPL', 'CVSA') AND user_email IS NULL"
+            ))
+            await db.execute(text(
+                "UPDATE watchlist_items SET user_email = 'john.maltese@gmail.com' "
+                "WHERE user_email IS NULL"
+            ))
+
             await db.commit()
         logger.info("Schema migrations applied successfully")
     except Exception as e:
