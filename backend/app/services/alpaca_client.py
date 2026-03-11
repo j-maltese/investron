@@ -470,3 +470,32 @@ async def get_option_chain(
     except Exception as e:
         logger.error("Failed to get option chain for %s: %s", ticker, e)
         raise AlpacaError(f"Option chain failed: {e}") from e
+
+
+async def is_option_contract_tradable(option_symbol: str) -> bool:
+    """Pre-flight check: verify an option contract is active and tradable on Alpaca.
+
+    The option chain endpoint can return contracts that the order endpoint won't
+    accept (e.g. status=inactive). This validates before we attempt to submit,
+    preventing failed orders and orphaned position records.
+    """
+    try:
+        client = get_trading_client()
+        contract = client.get_option_contract(option_symbol)
+        is_active = getattr(contract, "status", None)
+        is_tradable = getattr(contract, "tradable", False)
+
+        # AssetStatus enum — compare by value string to be safe
+        status_str = is_active.value if hasattr(is_active, "value") else str(is_active)
+        tradable = bool(is_tradable) and status_str == "active"
+
+        if not tradable:
+            logger.warning(
+                "Contract %s not tradable: status=%s, tradable=%s",
+                option_symbol, status_str, is_tradable,
+            )
+        return tradable
+    except Exception as e:
+        # If the lookup itself fails, the contract probably doesn't exist
+        logger.warning("Contract lookup failed for %s: %s", option_symbol, e)
+        return False
