@@ -100,17 +100,30 @@ async def _run_migrations():
 
             # Cleanup: remove orphaned positions created by failed orders
             # (bug where position was created before order submission — now fixed)
-            orphaned = await db.execute(text(
-                "DELETE FROM trading_positions "
-                "WHERE cost_basis = 0 AND quantity = 0 "
-                "AND status IN ('open', 'closed') AND avg_entry_price IS NULL "
-                "RETURNING id, ticker, option_symbol, status, opened_at"
+            # Step 1: find orphaned position IDs
+            orphaned_ids = await db.execute(text(
+                "SELECT id, ticker, option_symbol, status, opened_at "
+                "FROM trading_positions "
+                "WHERE avg_entry_price IS NULL "
+                "AND (cost_basis IS NULL OR cost_basis = 0) "
+                "AND asset_type = 'option'"
             ))
-            for row in orphaned.mappings().all():
-                logger.info(
-                    "Cleaned up orphaned position: id=%s ticker=%s symbol=%s status=%s opened=%s",
-                    row["id"], row["ticker"], row["option_symbol"], row["status"], row["opened_at"],
-                )
+            orphaned_rows = orphaned_ids.mappings().all()
+            if orphaned_rows:
+                ids = [row["id"] for row in orphaned_rows]
+                # Step 2: delete referencing orders first (also orphaned/failed)
+                await db.execute(text(
+                    "DELETE FROM trading_orders WHERE position_id = ANY(:ids)"
+                ), {"ids": ids})
+                # Step 3: now delete the orphaned positions
+                await db.execute(text(
+                    "DELETE FROM trading_positions WHERE id = ANY(:ids)"
+                ), {"ids": ids})
+                for row in orphaned_rows:
+                    logger.info(
+                        "Cleaned up orphaned position: id=%s ticker=%s symbol=%s status=%s opened=%s",
+                        row["id"], row["ticker"], row["option_symbol"], row["status"], row["opened_at"],
+                    )
 
             await db.commit()
         logger.info("Schema migrations applied successfully")
