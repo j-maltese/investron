@@ -98,6 +98,20 @@ async def _run_migrations():
                 "WHERE user_email IS NULL"
             ))
 
+            # Cleanup: remove orphaned positions created by failed orders
+            # (bug where position was created before order submission — now fixed)
+            orphaned = await db.execute(text(
+                "DELETE FROM trading_positions "
+                "WHERE cost_basis = 0 AND quantity = 0 "
+                "AND status IN ('open', 'closed') AND avg_entry_price IS NULL "
+                "RETURNING id, ticker, option_symbol, status, opened_at"
+            ))
+            for row in orphaned.mappings().all():
+                logger.info(
+                    "Cleaned up orphaned position: id=%s ticker=%s symbol=%s status=%s opened=%s",
+                    row["id"], row["ticker"], row["option_symbol"], row["status"], row["opened_at"],
+                )
+
             await db.commit()
         logger.info("Schema migrations applied successfully")
     except Exception as e:

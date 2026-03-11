@@ -301,6 +301,7 @@ backend/app/
 │   │                              #   Cached client singletons (TradingClient, StockDataClient, OptionDataClient)
 │   │                              #   submit_stock_order(), submit_option_order(), get_order_status()
 │   │                              #   get_positions(), get_account_info(), get_option_chain(), cancel_order()
+│   │                              #   is_option_contract_tradable() — pre-flight check (status+tradable)
 │   │                              #   parse_occ_symbol(), build_occ_symbol() — OCC option symbol helpers
 │   │
 │   ├── trading_db.py             # All CRUD for trading tables (raw SQL + text())
@@ -330,15 +331,16 @@ backend/app/
 │                                  #   run_wheel_cycle() — sync → detect assignments → per-symbol processing
 │                                  #   _sync_option_orders() — poll Alpaca for option fills, handle premiums
 │                                  #   _detect_assignments() — compare Alpaca positions vs local DB
-│                                  #   _sell_put() — sell cash-secured put (phase 1)
+│                                  #   _sell_put() — sell cash-secured put (phase 1) with tradability pre-flight
 │                                  #   _sell_call() — sell covered call with adjusted cost basis (phase 3)
-│                                  #   _select_best_option() — filter + score option chain
+│                                  #   _select_best_option() — filter + score option chain → ranked list
 │                                  #   _manage_put_position() — expiration monitoring + rolling
 │                                  #   _manage_call_position() — call expiration monitoring
 │                                  #   _check_hard_stop() — sell if down > max_stock_loss_pct
 │                                  #   _check_capital_efficiency() — exit if held > N days, no recovery
 │                                  #   _get_adjusted_cost_basis() — true break-even (entry - premiums)
 │                                  #   _would_exceed_pdt() — PDT day trade limit check
+│                                  #   _failed_ticker_cooldowns — 60min cooldown for rejected tickers
 │
 └── api/
     └── trading.py                # REST API at /api/trading
@@ -664,7 +666,7 @@ Updates strategy-level P&L aggregates from position data.
 
 ### Option Selection Logic
 
-`_select_best_option()` filters the Alpaca option chain and scores candidates:
+`_select_best_option()` filters the Alpaca option chain, scores candidates, and returns a ranked list (highest score first). The caller iterates through the list, running a tradability pre-flight check on each, until it finds one that Alpaca will accept.
 
 **Filters applied (all must pass):**
 1. Correct option type (put for phase 1, call for phase 3)
@@ -678,6 +680,12 @@ Updates strategy-level P&L aggregates from position data.
 - 40% — Annualized yield (higher is better)
 - 30% — Delta proximity to midpoint of range (closer to 0.225 is better)
 - 30% — DTE proximity to midpoint of range (closer to 26 days is better)
+
+**Tradability pre-flight:** After scoring, `_sell_put()` / `_sell_call()` iterate through ranked candidates and call `is_option_contract_tradable()` on each. This queries Alpaca's contract endpoint to verify `status=active` and `tradable=true`. Contracts that appear in the option chain but aren't actually tradeable (an Alpaca data consistency issue) are skipped with a `blocked_not_tradable` log entry, and the next-best candidate is tried. If all candidates fail, the ticker is placed on a 60-minute cooldown.
+
+**Failed ticker cooldown:** When all scored candidates for a ticker fail tradability checks or when order submission fails, the ticker is added to an in-memory cooldown map (`_failed_ticker_cooldowns`) for 60 minutes. This prevents wasting API calls retrying tickers with no tradable options.
+
+**Order-first, position-second:** Position records are only created in the database after Alpaca accepts the order. This prevents orphaned position rows when orders are rejected.
 
 **Moneyness fallback:** When Alpaca doesn't return greeks (common for some option chains), delta is estimated from how far the strike is from the stock price — a rough but usable proxy.
 
@@ -785,6 +793,7 @@ Both strategies generate extensive activity logs for monitoring. Three categorie
 | `blocked_insufficient_cash` | Wheel | Wanted to sell put but can't afford assignment |
 | `blocked_too_expensive` | Wheel | Ticker's 100 shares exceed total strategy capital |
 | `blocked_no_options` | Wheel | No contracts passed filters (includes filter breakdown) |
+| `blocked_not_tradable` | Wheel | Scored candidates failed Alpaca tradability pre-flight (status≠active or tradable=false) |
 | `blocked_no_greeks` | Wheel | Using moneyness fallback for delta |
 | `blocked_position_exists` | Wheel | Already have an open position on this symbol |
 | `blocked_roll_no_credit` | Wheel | Wanted to roll but can't get net credit |
@@ -809,6 +818,9 @@ All event details are stored in the `details` JSONB column and visible in the fr
 | **Capital efficiency exits** | Wheel | Reviews assigned stock held > 60 days with no recovery |
 | **Cash reservation** | Wheel | Prevents over-selling puts beyond assignment capacity |
 | **PDT protection** | Wheel | Blocks trades that would exceed 3-per-5-day day trade limit |
+| **Tradability pre-flight** | Wheel | Verifies option contract is `active` + `tradable` on Alpaca before submitting — falls back to next-best candidate |
+| **Failed ticker cooldown** | Wheel | Tickers with failed tradability checks or order rejections are skipped for 60 minutes |
+| **Order-first positioning** | Wheel | Position DB records only created after Alpaca accepts the order — prevents orphaned rows |
 | **Affordability gating** | Wheel | Skips tickers where assignment cost > available cash |
 | **Market hours gate** | Both | Only runs during US market hours (Mon-Fri, 9 AM - 4 PM ET) |
 | **AI cost cap** | Simple Stock | Max 5 AI calls per cycle to limit GPT-4o spending |
@@ -915,6 +927,6 @@ WARNING: stop_loss STALE blocked — Price stale: last trade 342s ago (max 300s 
 | **Phase 1** | Complete | DB schema, Alpaca client, trading DB helpers, API endpoints, frontend shell (strategy cards, positions/orders/activity tables, portfolio summary) |
 | **Phase 2** | Complete | Simple stock strategy (AI signals + execution), trading engine wiring, market hours gate, scanner timing (hourly → daily at 5 PM ET), RAG-enhanced trade signals (daily auto-index + filing context injection) |
 | **Phase 3** | Complete | Wheel options strategy — state machine, option selection, defensive suite (hard stops, rolling, adjusted cost basis, capital efficiency), enhanced Activity Feed with filters/expand/date range, comprehensive observability logging |
-| **Phase 3.5** | Complete | Layer 1 Execution Safety — independent yfinance price confirmation, bid/ask spread checks, price staleness validation, limit/stop-limit orders (no market orders), 3-layer stop-loss confirmation |
+| **Phase 3.5** | Complete | Layer 1 Execution Safety — independent yfinance price confirmation, bid/ask spread checks, price staleness validation, limit/stop-limit orders (no market orders), 3-layer stop-loss confirmation, option tradability pre-flight (Alpaca contract status+tradable check with fallback to next candidate), failed ticker cooldowns (60min), order-first positioning (no orphaned DB rows) |
 | **Phase 4** | Not started | Layer 2 Smarter Entry/Exit — intrinsic value guardrails, trailing stop-loss, scaled entries (DCA), volatility-adjusted sizing |
 | **Phase 5** | Not started | Polish — P&L charts, strategy config modal, report generation, CSV export |

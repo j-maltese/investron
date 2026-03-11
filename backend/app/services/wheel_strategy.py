@@ -49,6 +49,11 @@ from app.services import trading_db, alpaca_client
 
 logger = logging.getLogger(__name__)
 
+# Track tickers that recently failed order submission so we don't retry every cycle.
+# Maps ticker -> datetime of failure. Entries expire after the cooldown period.
+_failed_ticker_cooldowns: dict[str, datetime] = {}
+FAILED_TICKER_COOLDOWN_MINUTES = 60  # Skip a ticker for 1 hour after an order submission failure
+
 
 # ---------------------------------------------------------------------------
 # Candidate selection — screener-driven or legacy fixed symbol list
@@ -972,6 +977,12 @@ async def _sell_put(
         )
         return 0
 
+    # Cooldown check: skip tickers that recently failed order submission
+    # (e.g. inactive contract, Alpaca rejection) to avoid spamming errors
+    cooldown_until = _failed_ticker_cooldowns.get(ticker)
+    if cooldown_until and datetime.now(timezone.utc) < cooldown_until:
+        return 0  # Silently skip — already logged when the failure occurred
+
     # Calculate date range for option chain based on config
     today = date_type.today()
     exp_min_days = config.get("expiration_min_days", 7)
@@ -1004,12 +1015,14 @@ async def _sell_put(
     # Max strike we can afford: must have cash to buy 100 shares at strike
     max_strike = available_cash / 100
 
-    # Find the best put to sell using our filtering and scoring logic
-    best = _select_best_option(
+    # Find puts to sell, ranked by score (best first).
+    # Returns multiple candidates so we can fall back if the top pick
+    # fails the Alpaca tradability check.
+    ranked = _select_best_option(
         chain, "put", config, current_price, max_strike=max_strike,
     )
 
-    if not best:
+    if not ranked:
         await trading_db.log_activity(
             db, strategy_id, "blocked_no_options",
             f"No suitable puts for {ticker}: {len(chain)} contracts fetched, "
@@ -1022,7 +1035,41 @@ async def _sell_put(
         )
         return 0
 
-    # --- We have a winner! Extract details and submit the order ---
+    # --- Iterate through ranked candidates until one is tradable ---
+    best = None
+    for candidate in ranked:
+        sym = candidate["symbol"]
+        # Pre-flight check: verify Alpaca will actually accept this contract
+        tradable = await alpaca_client.is_option_contract_tradable(sym)
+        if tradable:
+            best = candidate
+            break
+        # Log the skip so we have visibility into untradable contracts
+        await trading_db.log_activity(
+            db, strategy_id, "blocked_not_tradable",
+            f"Contract {sym} not tradable on Alpaca, trying next candidate",
+            ticker=ticker,
+            details={"symbol": sym, "rank": ranked.index(candidate) + 1},
+        )
+
+    if not best:
+        # All scored candidates failed the tradability check
+        _failed_ticker_cooldowns[ticker] = datetime.now(timezone.utc) + timedelta(
+            minutes=FAILED_TICKER_COOLDOWN_MINUTES
+        )
+        await trading_db.log_activity(
+            db, strategy_id, "blocked_not_tradable",
+            f"No tradable puts for {ticker}: {len(ranked)} candidates scored, "
+            f"none active on Alpaca (cooldown {FAILED_TICKER_COOLDOWN_MINUTES}min)",
+            ticker=ticker,
+            details={
+                "ticker": ticker, "candidates_scored": len(ranked),
+                "symbols_checked": [c["symbol"] for c in ranked[:5]],
+            },
+        )
+        return 0
+
+    # --- We have a verified tradable winner! ---
     option_symbol = best["symbol"]
     parsed = alpaca_client.parse_occ_symbol(option_symbol)
     strike = parsed["strike"]
@@ -1058,8 +1105,32 @@ async def _sell_put(
         },
     )
 
-    # Create the option position record BEFORE submitting the order
-    # (same pattern as simple_stock_strategy)
+    # Submit limit sell order to Alpaca — only create DB records on success.
+    # The tradability pre-check above should prevent most rejections, but
+    # we still handle the edge case of a race condition or transient error.
+    try:
+        order_result = await alpaca_client.submit_option_order(
+            option_symbol=option_symbol,
+            qty=1,
+            side="sell",
+            order_type="limit",
+            limit_price=round(bid_price, 2),
+        )
+    except Exception as e:
+        # Order rejected despite passing pre-flight — cooldown the ticker
+        logger.error("Failed to submit put order for %s: %s", ticker, e)
+        _failed_ticker_cooldowns[ticker] = datetime.now(timezone.utc) + timedelta(
+            minutes=FAILED_TICKER_COOLDOWN_MINUTES
+        )
+        await trading_db.log_activity(
+            db, strategy_id, "error",
+            f"Put order submission failed for {ticker}: {str(e)[:200]} "
+            f"(cooldown {FAILED_TICKER_COOLDOWN_MINUTES}min)",
+            ticker=ticker,
+        )
+        return 0
+
+    # Order accepted by Alpaca — now create the position record
     position_id = await trading_db.insert_position(db, {
         "strategy_id": strategy_id,
         "ticker": ticker,
@@ -1073,27 +1144,6 @@ async def _sell_put(
         "cost_basis": 0,  # Will be updated when fill comes in
         "status": "open",
     })
-
-    # Submit limit sell order to Alpaca
-    # We sell at the bid price (or slightly above) since we're the seller
-    try:
-        order_result = await alpaca_client.submit_option_order(
-            option_symbol=option_symbol,
-            qty=1,
-            side="sell",
-            order_type="limit",
-            limit_price=round(bid_price, 2),
-        )
-    except Exception as e:
-        # Order failed — clean up the position we just created
-        logger.error("Failed to submit put order for %s: %s", ticker, e)
-        await trading_db.close_position(db, position_id, "cancelled", 0)
-        await trading_db.log_activity(
-            db, strategy_id, "error",
-            f"Put order submission failed for {ticker}: {str(e)[:200]}",
-            ticker=ticker,
-        )
-        return 0
 
     # Record the order in our DB for tracking
     await trading_db.insert_order(db, {
@@ -1218,12 +1268,12 @@ async def _sell_call(
         )
         return False
 
-    # Find the best call to sell
-    best = _select_best_option(
+    # Find calls to sell, ranked by score (best first)
+    ranked = _select_best_option(
         chain, "call", config, current_price, min_strike=min_strike,
     )
 
-    if not best:
+    if not ranked:
         await trading_db.log_activity(
             db, strategy_id, "blocked_no_options",
             f"No suitable calls for {ticker}: {len(chain)} contracts fetched, "
@@ -1236,7 +1286,38 @@ async def _sell_call(
         )
         return False
 
-    # Extract option details
+    # --- Iterate through ranked candidates until one is tradable ---
+    best = None
+    for candidate in ranked:
+        sym = candidate["symbol"]
+        tradable = await alpaca_client.is_option_contract_tradable(sym)
+        if tradable:
+            best = candidate
+            break
+        await trading_db.log_activity(
+            db, strategy_id, "blocked_not_tradable",
+            f"Contract {sym} not tradable on Alpaca, trying next candidate",
+            ticker=ticker,
+            details={"symbol": sym, "rank": ranked.index(candidate) + 1},
+        )
+
+    if not best:
+        _failed_ticker_cooldowns[ticker] = datetime.now(timezone.utc) + timedelta(
+            minutes=FAILED_TICKER_COOLDOWN_MINUTES
+        )
+        await trading_db.log_activity(
+            db, strategy_id, "blocked_not_tradable",
+            f"No tradable calls for {ticker}: {len(ranked)} candidates scored, "
+            f"none active on Alpaca (cooldown {FAILED_TICKER_COOLDOWN_MINUTES}min)",
+            ticker=ticker,
+            details={
+                "ticker": ticker, "candidates_scored": len(ranked),
+                "symbols_checked": [c["symbol"] for c in ranked[:5]],
+            },
+        )
+        return False
+
+    # --- Verified tradable winner ---
     option_symbol = best["symbol"]
     parsed = alpaca_client.parse_occ_symbol(option_symbol)
     strike = parsed["strike"]
@@ -1263,7 +1344,29 @@ async def _sell_call(
         },
     )
 
-    # Create option position record
+    # Submit limit sell order — pre-flight passed, but still handle edge cases
+    try:
+        order_result = await alpaca_client.submit_option_order(
+            option_symbol=option_symbol,
+            qty=1,
+            side="sell",
+            order_type="limit",
+            limit_price=round(bid_price, 2),
+        )
+    except Exception as e:
+        logger.error("Failed to submit call order for %s: %s", ticker, e)
+        _failed_ticker_cooldowns[ticker] = datetime.now(timezone.utc) + timedelta(
+            minutes=FAILED_TICKER_COOLDOWN_MINUTES
+        )
+        await trading_db.log_activity(
+            db, strategy_id, "error",
+            f"Call order submission failed for {ticker}: {str(e)[:200]} "
+            f"(cooldown {FAILED_TICKER_COOLDOWN_MINUTES}min)",
+            ticker=ticker,
+        )
+        return False
+
+    # Order accepted — now create the position record
     position_id = await trading_db.insert_position(db, {
         "strategy_id": strategy_id,
         "ticker": ticker,
@@ -1277,25 +1380,6 @@ async def _sell_call(
         "cost_basis": 0,
         "status": "open",
     })
-
-    # Submit limit sell order
-    try:
-        order_result = await alpaca_client.submit_option_order(
-            option_symbol=option_symbol,
-            qty=1,
-            side="sell",
-            order_type="limit",
-            limit_price=round(bid_price, 2),
-        )
-    except Exception as e:
-        logger.error("Failed to submit call order for %s: %s", ticker, e)
-        await trading_db.close_position(db, position_id, "cancelled", 0)
-        await trading_db.log_activity(
-            db, strategy_id, "error",
-            f"Call order submission failed for {ticker}: {str(e)[:200]}",
-            ticker=ticker,
-        )
-        return False
 
     # Record order
     await trading_db.insert_order(db, {
@@ -1370,7 +1454,7 @@ def _select_best_option(
     max_strike: float | None = None,
     min_strike: float | None = None,
 ) -> dict | None:
-    """Filter and score an option chain, returning the single best candidate.
+    """Filter and score an option chain, returning ranked candidates.
 
     This is a pure function (no DB/API calls) that applies the strategy's
     configured thresholds to find the optimal option to sell.
@@ -1388,8 +1472,9 @@ def _select_best_option(
       - 30% delta proximity to target midpoint (closer = better risk/reward)
       - 30% DTE proximity to target midpoint (sweet spot for time decay)
 
-    Returns the highest-scoring contract with internal metadata (_score, _dte,
-    _yield_annualized, _candidates_passed), or None if no candidates pass.
+    Returns a list of candidates sorted by score (highest first), each with
+    internal metadata (_score, _dte, _yield_annualized, _candidates_passed).
+    Returns empty list if no candidates pass filters.
     """
     # Extract config thresholds with defaults
     delta_min = config.get("delta_min", 0.15)
@@ -1525,15 +1610,17 @@ def _select_best_option(
         )
 
     if not candidates:
-        return None
+        return []
 
     # Tag candidates count on all candidates (for logging)
     for c in candidates:
         c["_candidates_passed"] = len(candidates)
 
-    # Return the highest-scoring candidate
+    # Return all candidates sorted by score (highest first).
+    # Callers typically use the top pick, but can iterate if the best
+    # option fails a tradability check on Alpaca.
     candidates.sort(key=lambda c: c["_score"], reverse=True)
-    return candidates[0]
+    return candidates
 
 
 # ---------------------------------------------------------------------------
