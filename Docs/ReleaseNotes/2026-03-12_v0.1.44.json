@@ -1,0 +1,16 @@
+{
+  "version": "0.1.44",
+  "date": "2026-03-12",
+  "title": "v0.1.44",
+  "summary": "Release 0.1.44 includes 2 enhancements.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Adjusts income statements to use quarterly values individually as well as YTD",
+        "Makes indexxing more efficient for AI Analysis"
+      ]
+    }
+  ]
+}
