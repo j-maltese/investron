@@ -46,6 +46,19 @@ from app.services.yfinance_svc import get_quick_price
 
 logger = logging.getLogger(__name__)
 
+# In-memory cache for AI trade signals to avoid redundant GPT calls.
+# Key: (ticker, action_type), Value: (timestamp, signal_dict)
+_signal_cache: dict[tuple[str, str], tuple[datetime, dict]] = {}
+
+
+def _evict_stale_signals(ttl_seconds: int) -> None:
+    """Remove expired entries from the signal cache."""
+    now = datetime.now(timezone.utc)
+    stale = [k for k, (ts, _) in _signal_cache.items()
+             if (now - ts).total_seconds() >= ttl_seconds]
+    for k in stale:
+        del _signal_cache[k]
+
 # Focused trade-decision prompt — much shorter than the research prompt
 TRADE_SIGNAL_PROMPT = """You are a disciplined value investor managing a ${capital:.0f} paper trading portfolio.
 Today is {current_date}. Analyze the financial data below and decide whether to {action_type} this stock.
@@ -177,10 +190,24 @@ async def _get_ai_trade_signal(
 
     Builds full financial context (metrics, Graham, growth, financial statements)
     and optionally injects RAG filing excerpts if the ticker has been indexed.
+
+    Results are cached per (ticker, action_type) for ``trading_signal_cache_ttl``
+    seconds (default 4 hours) to avoid redundant GPT calls when fundamentals
+    haven't changed.
     """
     settings = get_settings()
     if not settings.openai_api_key:
         return {"action": "hold", "confidence": 0, "reasoning": "OpenAI API key not configured"}
+
+    # Check signal cache — return cached result if still fresh
+    cache_key = (ticker, action_type)
+    cached = _signal_cache.get(cache_key)
+    if cached:
+        cached_at, cached_signal = cached
+        age = (datetime.now(timezone.utc) - cached_at).total_seconds()
+        if age < settings.trading_signal_cache_ttl:
+            logger.info("AI signal cache hit for %s/%s (age=%.0fs)", ticker, action_type, age)
+            return {**cached_signal, "_cached": True}
 
     # Full financial context — includes last 3 periods of income/balance/cashflow
     context_data = await build_ticker_context(db, ticker, include_financials=True, include_growth=True)
@@ -234,6 +261,9 @@ async def _get_ai_trade_signal(
 
         signal = json.loads(content)
         logger.info("AI signal for %s: %s (conf=%.2f)", ticker, signal.get("action"), signal.get("confidence", 0))
+
+        # Cache successful signal for future cycles
+        _signal_cache[cache_key] = (datetime.now(timezone.utc), signal)
         return signal
 
     except (json.JSONDecodeError, KeyError) as e:
@@ -546,6 +576,10 @@ async def run_simple_stock_cycle(db: AsyncSession, strategy: dict) -> None:
     2. Check existing positions for sell signals
     3. Look for new buy opportunities
     """
+    # Evict stale signal cache entries to bound memory
+    settings = get_settings()
+    _evict_stale_signals(settings.trading_signal_cache_ttl)
+
     strategy_id = strategy["id"]
     config = strategy.get("config", {})
     min_ai_confidence = config.get("min_ai_confidence", 0.7)

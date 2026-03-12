@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     trading_auto_index_top_n: int = 10   # Top screener tickers to auto-index daily for RAG
     trading_rag_max_tokens: int = 2000   # Max filing context tokens per trade signal prompt
     trading_rag_enabled: bool = True     # Kill switch for RAG without disabling trading
+    trading_signal_cache_ttl: int = 14400  # Seconds to cache AI signals per ticker (4 hours)
 
     # Layer 1: Execution Safety — prevents bad fills and false-trigger sells
     price_confirm_divergence_pct: float = 5.0  # Max % divergence between Alpaca & yfinance before blocking
