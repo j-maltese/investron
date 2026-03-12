@@ -198,26 +198,110 @@ async def _run_indexing_pipeline(
 
     await _progress(f"Found {len(filings_to_index)} filings to index")
 
-    # Step 3: Delete existing chunks for this ticker (fresh re-index)
-    await db.execute(
-        text("DELETE FROM filing_chunks WHERE ticker = :ticker"),
-        {"ticker": ticker},
-    )
-    await db.commit()
+    # Step 3: Incremental indexing — skip filings we already have chunks for.
+    # Resolve filing_ids and check which ones are already in the DB.
+    target_filing_ids: list[int] = []
+    filing_id_map: dict[int, dict] = {}  # filing_id → filing dict
+    for f in filings_to_index:
+        fid = await _resolve_filing_id(db, company_id, f)
+        if fid:
+            target_filing_ids.append(fid)
+            filing_id_map[fid] = f
 
-    # Step 4: Process each filing
-    total_chunks = 0
-    filings_indexed = 0
+    # Which of these already have chunks?
+    already_indexed_ids: set[int] = set()
+    if target_filing_ids:
+        result = await db.execute(
+            text("""
+                SELECT DISTINCT filing_id FROM filing_chunks
+                WHERE ticker = :ticker AND filing_id = ANY(:ids)
+            """),
+            {"ticker": ticker, "ids": target_filing_ids},
+        )
+        already_indexed_ids = {row[0] for row in result.fetchall()}
+
+    # Delete chunks for filings that are no longer in our target window
+    # (e.g., an older 8-K got bumped by a newer one)
+    if target_filing_ids:
+        await db.execute(
+            text("""
+                DELETE FROM filing_chunks
+                WHERE ticker = :ticker
+                  AND filing_id IS NOT NULL
+                  AND filing_id != ALL(:keep_ids)
+            """),
+            {"ticker": ticker, "keep_ids": target_filing_ids},
+        )
+        await db.commit()
+
+    # Filter down to only new filings that need indexing.
+    # Build a reverse lookup: accession_number → filing_id from our earlier resolution
+    accession_to_fid: dict[str, int] = {}
+    for f in filings_to_index:
+        acc = f.get("accession_number")
+        if acc:
+            for fid, mapped_f in filing_id_map.items():
+                if mapped_f.get("accession_number") == acc:
+                    accession_to_fid[acc] = fid
+                    break
+
+    new_filings: list[dict] = []
+    for f in filings_to_index:
+        acc = f.get("accession_number")
+        fid = accession_to_fid.get(acc) if acc else None
+        if fid and fid not in already_indexed_ids:
+            new_filings.append(f)
+        elif not fid:
+            # Filing not in cache yet — needs indexing
+            new_filings.append(f)
+    skipped = len(filings_to_index) - len(new_filings)
+    if skipped > 0:
+        await _progress(
+            f"Skipping {skipped} already-indexed filings, "
+            f"indexing {len(new_filings)} new filings"
+        )
+
+    if not new_filings:
+        # Everything is already indexed — just update status and return
+        existing_count = await _get_chunk_count(db, ticker)
+        await _update_status(
+            db, ticker, company_id, "ready",
+            filings_indexed=len(already_indexed_ids),
+            chunks_total=existing_count,
+            last_filing_date=max(
+                (f.get("filing_date", "") for f in filings_to_index),
+                default=None,
+            ),
+        )
+        elapsed = time.time() - start_time
+        await _progress(
+            f"All filings already indexed ({existing_count} chunks). "
+            f"Nothing new to process ({elapsed:.1f}s)"
+        )
+        _indexing_progress.pop(ticker, None)
+        return {
+            "ticker": ticker,
+            "status": "ready",
+            "filings_indexed": len(already_indexed_ids),
+            "chunks_total": existing_count,
+            "elapsed_seconds": round(elapsed, 1),
+            "skipped": skipped,
+        }
+
+    # Step 4: Process each NEW filing
+    # Start counts from what's already in the DB
+    total_chunks = await _get_chunk_count(db, ticker)
+    filings_indexed = len(already_indexed_ids)
     errors: list[str] = []
     latest_filing_date: str | None = None
 
-    for i, filing in enumerate(filings_to_index, 1):
+    for i, filing in enumerate(new_filings, 1):
         filing_type = filing["filing_type"]
         filing_date = filing.get("filing_date", "unknown")
         filing_url = filing.get("filing_url", "")
 
         await _progress(
-            f"Processing {filing_type} ({filing_date}) [{i}/{len(filings_to_index)}]"
+            f"Processing {filing_type} ({filing_date}) [{i}/{len(new_filings)}]"
         )
 
         if not filing_url:
@@ -276,10 +360,11 @@ async def _run_indexing_pipeline(
         "filings_indexed": filings_indexed,
         "chunks_total": total_chunks,
         "elapsed_seconds": round(elapsed, 1),
+        "skipped": skipped,
         "errors": errors or None,
     }
     await _progress(
-        f"Indexing complete: {filings_indexed} filings, "
+        f"Indexing complete: {filings_indexed} filings ({skipped} skipped), "
         f"{total_chunks} chunks in {elapsed:.1f}s"
     )
     # Clean up ephemeral progress now that indexing is done
@@ -391,6 +476,15 @@ async def _index_single_filing(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+async def _get_chunk_count(db: AsyncSession, ticker: str) -> int:
+    """Return the total number of indexed chunks for a ticker."""
+    result = await db.execute(
+        text("SELECT COUNT(*) FROM filing_chunks WHERE ticker = :ticker"),
+        {"ticker": ticker},
+    )
+    return result.scalar_one()
+
 
 async def _resolve_filing_id(
     db: AsyncSession, company_id: int, filing: dict

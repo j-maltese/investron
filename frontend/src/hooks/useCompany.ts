@@ -28,10 +28,10 @@ export function useMetrics(ticker: string) {
   })
 }
 
-export function useStatements(ticker: string, type: string, period: string) {
+export function useStatements(ticker: string, type: string, period: string, quarterlyView?: string) {
   return useQuery({
-    queryKey: ['statements', ticker, type, period],
-    queryFn: () => api.getStatements(ticker, type, period),
+    queryKey: ['statements', ticker, type, period, quarterlyView],
+    queryFn: () => api.getStatements(ticker, type, period, quarterlyView),
     enabled: !!ticker,
     staleTime: 5 * 60_000,
   })

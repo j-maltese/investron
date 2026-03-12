@@ -10,7 +10,7 @@ from app.utils.cache import get_cached_data, set_cached_data
 # strategy, etc.) to automatically invalidate all cached financial statements.
 # Old cache entries with the previous version simply won't match and will be
 # re-fetched from EDGAR on next access.
-_XBRL_CACHE_VERSION = 2
+_XBRL_CACHE_VERSION = 3  # bumped: quarterly standalone/YTD extraction
 
 
 async def get_financial_statements(
@@ -18,21 +18,30 @@ async def get_financial_statements(
     ticker: str,
     statement_type: str = "income_statement",
     period_type: str = "annual",
+    quarterly_view: str = "standalone",
 ) -> dict:
     """Get financial statements with caching.
 
     Args:
         statement_type: "income_statement" | "balance_sheet" | "cash_flow"
         period_type: "annual" | "quarterly"
+        quarterly_view: "standalone" (true quarter values) or "ytd" (cumulative).
+                        Only applies when period_type == "quarterly".
     """
     settings = get_settings()
     company = await get_or_create_company(db, ticker)
     if not company:
         return {"ticker": ticker, "statement_type": statement_type, "period_type": period_type, "statements": []}
 
+    # Cache key includes quarterly_view for quarterly requests so both variants
+    # are cached independently. Annual requests ignore quarterly_view.
+    cache_data_type = statement_type
+    if period_type == "quarterly":
+        cache_data_type = f"{statement_type}_{quarterly_view}"
+
     # Check cache — versioned key so logic changes auto-invalidate stale data
     cache_source = f"edgar_xbrl_v{_XBRL_CACHE_VERSION}"
-    cached = await get_cached_data(db, company["id"], cache_source, statement_type, period_type)
+    cached = await get_cached_data(db, company["id"], cache_source, cache_data_type, period_type)
     if cached:
         return cached
 
@@ -49,37 +58,90 @@ async def get_financial_statements(
         "cash_flow": edgar.CASH_FLOW_CONCEPTS,
     }.get(statement_type, edgar.INCOME_STATEMENT_CONCEPTS)
 
-    time_series = edgar.extract_financial_time_series(facts, concept_map, period_type)
+    if period_type == "quarterly":
+        # Use new quarterly extraction with standalone/YTD awareness
+        if quarterly_view == "ytd":
+            time_series = edgar.extract_quarterly_ytd(facts, concept_map, statement_type)
+        else:
+            time_series = edgar.extract_quarterly_standalone(facts, concept_map, statement_type)
 
-    # Pivot into per-period statements
-    all_periods = set()
+        # Pivot quarterly data — entries have quarter_label for display
+        statements, has_derived = _pivot_quarterly(time_series)
+
+        result = {
+            "ticker": ticker,
+            "statement_type": statement_type,
+            "period_type": period_type,
+            "quarterly_view": quarterly_view,
+            "has_derived_quarters": has_derived,
+            "statements": statements,
+        }
+    else:
+        # Annual: use existing extraction (unchanged)
+        time_series = edgar.extract_financial_time_series(facts, concept_map, period_type)
+        statements = _pivot_annual(time_series)
+
+        result = {
+            "ticker": ticker,
+            "statement_type": statement_type,
+            "period_type": period_type,
+            "statements": statements,
+        }
+
+    # Cache it with versioned key
+    await set_cached_data(
+        db, company["id"], cache_source, cache_data_type, period_type,
+        result, settings.cache_ttl_financials,
+    )
+
+    return result
+
+
+def _pivot_annual(time_series: dict[str, list[dict]]) -> list[dict]:
+    """Pivot annual time series into per-period statement rows (existing logic)."""
+    all_periods: set[str] = set()
     for series in time_series.values():
         for entry in series:
             all_periods.add(entry["period"])
 
     statements = []
     for period in sorted(all_periods):
-        row = {"period": period}
+        row: dict = {"period": period}
         for field, series in time_series.items():
             match = next((e for e in series if e["period"] == period), None)
             if match:
                 row[field] = match["value"]
         statements.append(row)
+    return statements
 
-    result = {
-        "ticker": ticker,
-        "statement_type": statement_type,
-        "period_type": period_type,
-        "statements": statements,
-    }
 
-    # Cache it with versioned key
-    await set_cached_data(
-        db, company["id"], cache_source, statement_type, period_type,
-        result, settings.cache_ttl_financials,
-    )
+def _pivot_quarterly(time_series: dict[str, list[dict]]) -> tuple[list[dict], bool]:
+    """Pivot quarterly time series into per-period statement rows.
 
-    return result
+    Uses quarter_label as the display period and period (date) for sorting.
+    Returns (statements, has_derived_quarters).
+    """
+    # Collect all unique (period_date, quarter_label) pairs across all fields
+    period_info: dict[str, str] = {}  # period_date → quarter_label
+    has_derived = False
+
+    for series in time_series.values():
+        for entry in series:
+            period_info[entry["period"]] = entry.get("quarter_label", entry["period"])
+            if entry.get("is_derived"):
+                has_derived = True
+
+    statements = []
+    for period_date in sorted(period_info.keys()):
+        label = period_info[period_date]
+        row: dict = {"period": label, "period_end": period_date}
+        for field, series in time_series.items():
+            match = next((e for e in series if e["period"] == period_date), None)
+            if match:
+                row[field] = match["value"]
+        statements.append(row)
+
+    return statements, has_derived
 
 
 async def get_key_metrics(db: AsyncSession, ticker: str) -> dict:

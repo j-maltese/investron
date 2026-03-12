@@ -27,6 +27,8 @@ export interface FinancialStatementsResponse {
   ticker: string
   statement_type: string
   period_type: string
+  quarterly_view?: 'standalone' | 'ytd'
+  has_derived_quarters?: boolean
   statements: FinancialStatement[]
 }
 

@@ -47,9 +47,9 @@ export const api = {
   getCompany: (ticker: string) =>
     apiFetch<Company>(`/api/companies/${ticker}`),
 
-  getStatements: (ticker: string, type: string, period: string) =>
+  getStatements: (ticker: string, type: string, period: string, quarterlyView?: string) =>
     apiFetch<FinancialStatementsResponse>(
-      `/api/financials/${ticker}/statements?statement_type=${type}&period_type=${period}`
+      `/api/financials/${ticker}/statements?statement_type=${type}&period_type=${period}${quarterlyView ? `&quarterly_view=${quarterlyView}` : ''}`
     ),
 
   getMetrics: (ticker: string) =>
