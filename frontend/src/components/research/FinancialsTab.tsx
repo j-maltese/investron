@@ -10,6 +10,11 @@ interface FinancialsTabProps {
 type StatementType = 'income_statement' | 'balance_sheet' | 'cash_flow'
 type PeriodType = 'annual' | 'quarterly'
 type QuarterlyView = 'standalone' | 'ytd'
+type TimeRange = '1Y' | '2Y' | '5Y' | '10Y' | 'ALL'
+
+const TIME_RANGE_YEARS: Record<TimeRange, number | null> = {
+  '1Y': 1, '2Y': 2, '5Y': 5, '10Y': 10, 'ALL': null,
+}
 
 const STATEMENT_LABELS: Record<StatementType, string> = {
   income_statement: 'Income Statement',
@@ -80,10 +85,47 @@ function formatChartPeriod(period: string, periodType: PeriodType): string {
   return String(period)
 }
 
+/** Custom X-axis tick for quarterly charts: "Q3" on top line, year below on first quarter of each year */
+function QuarterlyTick({ x, y, payload, index, visibleTicksCount }: // eslint-disable-line @typescript-eslint/no-explicit-any
+  { x: number; y: number; payload: { value: string }; index: number; visibleTicksCount: number }) {
+  const label = payload.value  // e.g. "Q3 '24"
+  // Extract quarter part ("Q3") and year part ("'24")
+  const parts = label.split(' ')
+  const quarter = parts[0] || label
+  const yearPart = parts[1] || ''
+
+  // Show year when it changes from the previous tick
+  const isFirstOfYear = index === 0 || !label.endsWith(yearPart) // always show year on first tick
+  // Actually, detect year change by comparing with previous — we'll use a simpler approach:
+  // Show year on Q1 (or first tick), hide on others
+  const isQ1 = quarter === 'Q1' || quarter === '3M'  // standalone or YTD first period
+  const showYear = index === 0 || isQ1
+
+  // For dense charts, skip some labels to avoid overlap
+  const skipInterval = visibleTicksCount > 40 ? 2 : visibleTicksCount > 24 ? 1 : 0
+  const showLabel = skipInterval === 0 || index % (skipInterval + 1) === 0
+
+  if (!showLabel) return null
+
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text x={0} y={0} dy={12} textAnchor="middle" fontSize={10} fill="var(--muted-foreground)">
+        {quarter}
+      </text>
+      {showYear && (
+        <text x={0} y={0} dy={24} textAnchor="middle" fontSize={9} fill="var(--muted-foreground)" opacity={0.6}>
+          {yearPart ? `20${yearPart.replace("'", '')}` : ''}
+        </text>
+      )}
+    </g>
+  )
+}
+
 export function FinancialsTab({ ticker }: FinancialsTabProps) {
   const [statementType, setStatementType] = useState<StatementType>('income_statement')
   const [periodType, setPeriodType] = useState<PeriodType>('annual')
   const [quarterlyView, setQuarterlyView] = useState<QuarterlyView>('standalone')
+  const [timeRange, setTimeRange] = useState<TimeRange>('ALL')
 
   // Only pass quarterlyView when in quarterly mode
   const qv = periodType === 'quarterly' ? quarterlyView : undefined
@@ -93,8 +135,18 @@ export function FinancialsTab({ ticker }: FinancialsTabProps) {
     return <div className="text-[var(--muted-foreground)] py-8 text-center">Loading financial data...</div>
   }
 
-  const statements = data?.statements || []
+  const allStatements = data?.statements || []
   const hasDerived = data?.has_derived_quarters ?? false
+
+  // Filter statements by time range using period_end date
+  const years = TIME_RANGE_YEARS[timeRange]
+  const statements = years == null ? allStatements : allStatements.filter((s: FinancialStatement) => {
+    const endDate = s.period_end ? new Date(String(s.period_end)) : null
+    if (!endDate || isNaN(endDate.getTime())) return true  // keep if no valid date
+    const cutoff = new Date()
+    cutoff.setFullYear(cutoff.getFullYear() - years)
+    return endDate >= cutoff
+  })
 
   // Show standalone/YTD toggle for quarterly flow statements (not balance sheet)
   const showQuarterlyToggle = periodType === 'quarterly' && statementType !== 'balance_sheet'
@@ -168,6 +220,19 @@ export function FinancialsTab({ ticker }: FinancialsTabProps) {
             </button>
           </>
         )}
+        {/* Time range filter */}
+        <div className="w-px bg-[var(--border)] mx-1 h-6" />
+        {(Object.keys(TIME_RANGE_YEARS) as TimeRange[]).map((range) => (
+          <button
+            key={range}
+            onClick={() => setTimeRange(range)}
+            className={timeRange === range
+              ? 'px-2 py-1 rounded text-xs font-medium bg-blue-500/20 text-blue-300'
+              : 'px-2 py-1 rounded text-xs font-medium text-[var(--muted-foreground)] hover:bg-[var(--muted)]'}
+          >
+            {range}
+          </button>
+        ))}
       </div>
 
       {/* Trend Chart */}
@@ -179,7 +244,14 @@ export function FinancialsTab({ ticker }: FinancialsTabProps) {
           <div className="h-52">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData}>
-                <XAxis dataKey="period" tick={{ fontSize: 11 }} interval={0} angle={periodType === 'quarterly' ? -45 : 0} textAnchor={periodType === 'quarterly' ? 'end' : 'middle'} height={periodType === 'quarterly' ? 50 : 30} />
+                <XAxis
+                  dataKey="period"
+                  tick={periodType === 'quarterly'
+                    ? (props: any) => <QuarterlyTick {...props} visibleTicksCount={chartData.length} /> // eslint-disable-line @typescript-eslint/no-explicit-any
+                    : { fontSize: 12 }}
+                  interval={0}
+                  height={periodType === 'quarterly' ? 45 : 30}
+                />
                 <YAxis tick={{ fontSize: 12 }} />
                 <Tooltip formatter={(v: number | undefined) => v != null ? `$${v.toFixed(2)}B` : '-'} />
                 <Line type="monotone" dataKey={chartField} stroke="#3b82f6" strokeWidth={2} dot={{ r: 3 }} />
