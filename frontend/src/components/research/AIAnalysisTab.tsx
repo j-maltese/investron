@@ -162,11 +162,30 @@ function FilingIndexBanner({ ticker }: { ticker: string }) {
       ? Object.entries(breakdown).map(([type, count]) => `${count} ${type}`).join(', ')
       : `${indexStatus.filings_indexed} filings`
 
+    // Format last-indexed date as relative or short date
+    const indexedAt = indexStatus.last_indexed_at
+      ? new Date(indexStatus.last_indexed_at)
+      : null
+    const indexedAgo = indexedAt
+      ? (() => {
+          const diffMs = Date.now() - indexedAt.getTime()
+          const diffMins = Math.floor(diffMs / 60000)
+          if (diffMins < 1) return 'just now'
+          if (diffMins < 60) return `${diffMins}m ago`
+          const diffHours = Math.floor(diffMins / 60)
+          if (diffHours < 24) return `${diffHours}h ago`
+          const diffDays = Math.floor(diffHours / 24)
+          if (diffDays < 7) return `${diffDays}d ago`
+          return indexedAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        })()
+      : null
+
     return (
       <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/10 text-xs">
         <FileText size={14} className="text-emerald-400 shrink-0" />
         <span className="text-emerald-300">
           Filing search active — {breakdownText}, {indexStatus.chunks_total} chunks indexed
+          {indexedAgo && <span className="text-emerald-400/60"> · indexed {indexedAgo}</span>}
         </span>
         <button
           onClick={triggerIndexing}
