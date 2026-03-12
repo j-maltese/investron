@@ -94,9 +94,6 @@ function QuarterlyTick({ x, y, payload, index, visibleTicksCount }: // eslint-di
   const quarter = parts[0] || label
   const yearPart = parts[1] || ''
 
-  // Show year when it changes from the previous tick
-  const isFirstOfYear = index === 0 || !label.endsWith(yearPart) // always show year on first tick
-  // Actually, detect year change by comparing with previous — we'll use a simpler approach:
   // Show year on Q1 (or first tick), hide on others
   const isQ1 = quarter === 'Q1' || quarter === '3M'  // standalone or YTD first period
   const showYear = index === 0 || isQ1
