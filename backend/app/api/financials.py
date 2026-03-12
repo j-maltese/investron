@@ -19,10 +19,15 @@ async def get_statements(
     ticker: str,
     statement_type: str = Query("income_statement", pattern="^(income_statement|balance_sheet|cash_flow)$"),
     period_type: str = Query("annual", pattern="^(annual|quarterly)$"),
+    quarterly_view: str = Query("standalone", pattern="^(standalone|ytd)$"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get financial statements (income, balance sheet, cash flow)."""
-    return await get_financial_statements(db, ticker, statement_type, period_type)
+    """Get financial statements (income, balance sheet, cash flow).
+
+    For quarterly data, ``quarterly_view`` controls whether values are
+    standalone quarters (default) or YTD cumulative.
+    """
+    return await get_financial_statements(db, ticker, statement_type, period_type, quarterly_view)
 
 
 @router.get("/{ticker}/metrics")

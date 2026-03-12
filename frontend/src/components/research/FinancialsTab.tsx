@@ -9,6 +9,7 @@ interface FinancialsTabProps {
 
 type StatementType = 'income_statement' | 'balance_sheet' | 'cash_flow'
 type PeriodType = 'annual' | 'quarterly'
+type QuarterlyView = 'standalone' | 'ytd'
 
 const STATEMENT_LABELS: Record<StatementType, string> = {
   income_statement: 'Income Statement',
@@ -56,6 +57,9 @@ const FIELD_LABELS: Record<string, string> = {
   share_repurchases: 'Share Repurchases',
 }
 
+// Fields that are metadata, not financial data — exclude from display
+const META_FIELDS = new Set(['period', 'period_end'])
+
 function formatValue(val: unknown): string {
   if (val == null) return '-'
   const num = Number(val)
@@ -66,21 +70,39 @@ function formatValue(val: unknown): string {
   return num.toFixed(2)
 }
 
+/** Format period for chart X-axis: annual shows year, quarterly shows label as-is */
+function formatChartPeriod(period: string, periodType: PeriodType): string {
+  if (periodType === 'annual') {
+    // Annual: "2024-12-31" → "2024"
+    return String(period).slice(0, 4)
+  }
+  // Quarterly: backend sends "Q3 '24" — use directly
+  return String(period)
+}
+
 export function FinancialsTab({ ticker }: FinancialsTabProps) {
   const [statementType, setStatementType] = useState<StatementType>('income_statement')
   const [periodType, setPeriodType] = useState<PeriodType>('annual')
-  const { data, isLoading } = useStatements(ticker, statementType, periodType)
+  const [quarterlyView, setQuarterlyView] = useState<QuarterlyView>('standalone')
+
+  // Only pass quarterlyView when in quarterly mode
+  const qv = periodType === 'quarterly' ? quarterlyView : undefined
+  const { data, isLoading } = useStatements(ticker, statementType, periodType, qv)
 
   if (isLoading) {
     return <div className="text-[var(--muted-foreground)] py-8 text-center">Loading financial data...</div>
   }
 
   const statements = data?.statements || []
+  const hasDerived = data?.has_derived_quarters ?? false
 
-  // Get all fields (excluding 'period')
+  // Show standalone/YTD toggle for quarterly flow statements (not balance sheet)
+  const showQuarterlyToggle = periodType === 'quarterly' && statementType !== 'balance_sheet'
+
+  // Get all fields (excluding metadata)
   const allFields = new Set<string>()
   statements.forEach((s: FinancialStatement) => {
-    Object.keys(s).forEach((k) => { if (k !== 'period') allFields.add(k) })
+    Object.keys(s).forEach((k) => { if (!META_FIELDS.has(k)) allFields.add(k) })
   })
   const fields = Array.from(allFields)
 
@@ -93,7 +115,7 @@ export function FinancialsTab({ ticker }: FinancialsTabProps) {
     : 'capex'
 
   const chartData = statements.map((s: FinancialStatement) => ({
-    period: String(s.period).slice(0, 4),
+    period: formatChartPeriod(String(s.period), periodType),
     [chartField]: Number(s[chartField]) / 1e9 || 0,
     [chartField2]: Number(s[chartField2]) / 1e9 || 0,
   }))
@@ -101,7 +123,7 @@ export function FinancialsTab({ ticker }: FinancialsTabProps) {
   return (
     <div className="space-y-4">
       {/* Controls */}
-      <div className="flex gap-2 flex-wrap">
+      <div className="flex gap-2 flex-wrap items-center">
         {(Object.keys(STATEMENT_LABELS) as StatementType[]).map((type) => (
           <button
             key={type}
@@ -111,7 +133,7 @@ export function FinancialsTab({ ticker }: FinancialsTabProps) {
             {STATEMENT_LABELS[type]}
           </button>
         ))}
-        <div className="w-px bg-[var(--border)] mx-1" />
+        <div className="w-px bg-[var(--border)] mx-1 h-6" />
         <button
           onClick={() => setPeriodType('annual')}
           className={periodType === 'annual' ? 'btn-primary text-sm' : 'btn-secondary text-sm'}
@@ -124,6 +146,28 @@ export function FinancialsTab({ ticker }: FinancialsTabProps) {
         >
           Quarterly
         </button>
+        {/* Standalone / YTD sub-toggle for quarterly flow statements */}
+        {showQuarterlyToggle && (
+          <>
+            <div className="w-px bg-[var(--border)] mx-1 h-6" />
+            <button
+              onClick={() => setQuarterlyView('standalone')}
+              className={quarterlyView === 'standalone'
+                ? 'px-2.5 py-1 rounded text-xs font-medium bg-blue-500/20 text-blue-300'
+                : 'px-2.5 py-1 rounded text-xs font-medium text-[var(--muted-foreground)] hover:bg-[var(--muted)]'}
+            >
+              Standalone
+            </button>
+            <button
+              onClick={() => setQuarterlyView('ytd')}
+              className={quarterlyView === 'ytd'
+                ? 'px-2.5 py-1 rounded text-xs font-medium bg-blue-500/20 text-blue-300'
+                : 'px-2.5 py-1 rounded text-xs font-medium text-[var(--muted-foreground)] hover:bg-[var(--muted)]'}
+            >
+              YTD Cumulative
+            </button>
+          </>
+        )}
       </div>
 
       {/* Trend Chart */}
@@ -135,7 +179,7 @@ export function FinancialsTab({ ticker }: FinancialsTabProps) {
           <div className="h-52">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData}>
-                <XAxis dataKey="period" tick={{ fontSize: 12 }} />
+                <XAxis dataKey="period" tick={{ fontSize: 11 }} interval={0} angle={periodType === 'quarterly' ? -45 : 0} textAnchor={periodType === 'quarterly' ? 'end' : 'middle'} height={periodType === 'quarterly' ? 50 : 30} />
                 <YAxis tick={{ fontSize: 12 }} />
                 <Tooltip formatter={(v: number | undefined) => v != null ? `$${v.toFixed(2)}B` : '-'} />
                 <Line type="monotone" dataKey={chartField} stroke="#3b82f6" strokeWidth={2} dot={{ r: 3 }} />
@@ -159,7 +203,7 @@ export function FinancialsTab({ ticker }: FinancialsTabProps) {
                 </th>
                 {statements.map((s: FinancialStatement) => (
                   <th key={String(s.period)} className="text-right py-2 px-3 font-medium text-[var(--muted-foreground)] whitespace-nowrap">
-                    {String(s.period).slice(0, 10)}
+                    {String(s.period)}
                   </th>
                 ))}
               </tr>
@@ -179,6 +223,12 @@ export function FinancialsTab({ ticker }: FinancialsTabProps) {
               ))}
             </tbody>
           </table>
+          {/* Derived Q4 footnote */}
+          {hasDerived && periodType === 'quarterly' && quarterlyView === 'standalone' && (
+            <p className="text-xs text-[var(--muted-foreground)] mt-2 px-2 pb-1">
+              * Q4 values derived from annual report minus 9-month YTD
+            </p>
+          )}
         </div>
       )}
     </div>
