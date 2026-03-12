@@ -1,0 +1,16 @@
+{
+  "version": "0.1.45",
+  "date": "2026-03-12",
+  "title": "v0.1.45",
+  "summary": "Release 0.1.45 includes 2 enhancements.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Fixes isFirstOfYear variable issue",
+        "Adds date filtering to income statements tab"
+      ]
+    }
+  ]
+}
