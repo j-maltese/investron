@@ -138,7 +138,9 @@ export function FinancialsTab({ ticker }: FinancialsTabProps) {
   // Filter statements by time range using period_end date
   const years = TIME_RANGE_YEARS[timeRange]
   const statements = years == null ? allStatements : allStatements.filter((s: FinancialStatement) => {
-    const endDate = s.period_end ? new Date(String(s.period_end)) : null
+    // Annual view has no period_end — fall back to period (which is the end date string)
+    const dateStr = s.period_end || s.period
+    const endDate = dateStr ? new Date(String(dateStr)) : null
     if (!endDate || isNaN(endDate.getTime())) return true  // keep if no valid date
     const cutoff = new Date()
     cutoff.setFullYear(cutoff.getFullYear() - years)
