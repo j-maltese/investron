@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
-import type { WatchlistView, WatchlistNotesByTicker } from '@/lib/types'
+import type { WatchlistView, TickerNotesByTicker } from '@/lib/types'
 
 export function useWatchlist(view?: WatchlistView) {
   return useQuery({
@@ -50,26 +50,47 @@ export function useUpdateWatchlistItem() {
   })
 }
 
-/** Fetch all watchlist notes grouped by ticker — lightweight endpoint (no prices) */
-export function useWatchlistNotes() {
+/** Fetch all ticker notes grouped by ticker */
+export function useTickerNotes() {
   return useQuery({
-    queryKey: ['watchlist-notes'],
-    queryFn: () => api.getWatchlistNotes(),
+    queryKey: ['ticker-notes'],
+    queryFn: () => api.getTickerNotes(),
     staleTime: 60_000,
-    select: (data) => data.notes as WatchlistNotesByTicker,
+    select: (data) => data.notes as TickerNotesByTicker,
   })
 }
 
-/** Cross-user note editing by watchlist item ID */
-export function useUpdateNoteById() {
+/** Create or update the current user's note on a ticker (upsert) */
+export function useCreateTickerNote() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ itemId, notes }: { itemId: number; notes: string }) =>
-      api.updateNoteById(itemId, notes),
+    mutationFn: ({ ticker, notes }: { ticker: string; notes: string }) =>
+      api.createTickerNote(ticker, notes),
     onSuccess: () => {
-      // Invalidate both the notes cache and the main watchlist
-      queryClient.invalidateQueries({ queryKey: ['watchlist-notes'] })
-      queryClient.invalidateQueries({ queryKey: ['watchlist'] })
+      queryClient.invalidateQueries({ queryKey: ['ticker-notes'] })
+    },
+  })
+}
+
+/** Edit any ticker note by ID */
+export function useUpdateTickerNote() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ noteId, notes }: { noteId: number; notes: string }) =>
+      api.updateTickerNote(noteId, notes),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ticker-notes'] })
+    },
+  })
+}
+
+/** Delete a ticker note by ID */
+export function useDeleteTickerNote() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (noteId: number) => api.deleteTickerNote(noteId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ticker-notes'] })
     },
   })
 }

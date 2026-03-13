@@ -176,14 +176,14 @@ async def get_all_notes(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    """Get all watchlist items grouped by ticker — includes items with AND
-    without notes so the screener can show a pencil icon for any watchlisted
-    ticker and an amber dot for tickers that have notes."""
+    """Get all ticker notes grouped by ticker. Notes are decoupled from
+    watchlist items — they follow the ticker, not the watchlist entry,
+    and track who wrote each note."""
     result = await db.execute(
         text("""
-            SELECT w.id, w.ticker, w.notes, w.user_email
-            FROM watchlist_items w
-            ORDER BY w.ticker, w.added_at
+            SELECT n.id, n.ticker, n.notes, n.user_email, n.created_at, n.updated_at
+            FROM ticker_notes n
+            ORDER BY n.ticker, n.created_at
         """)
     )
     rows = [dict(r) for r in result.mappings().all()]
@@ -191,34 +191,82 @@ async def get_all_notes(
     # Add display names and group by ticker
     notes_by_ticker: dict[str, list] = {}
     for row in rows:
-        row["owner_name"] = USER_DISPLAY_NAMES.get(row.get("user_email"), "Unknown")
+        row["author_name"] = USER_DISPLAY_NAMES.get(row.get("user_email"), "Unknown")
         notes_by_ticker.setdefault(row["ticker"], []).append(row)
 
     return {"notes": notes_by_ticker}
 
 
-@router.patch("/notes/{item_id}")
+@router.post("/notes")
+async def create_note(
+    update: WatchlistItemUpdate,
+    ticker: str = Query(..., description="Ticker to add a note for"),
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Create or update a note for any ticker — attributed to the current user.
+    Uses upsert so each user can only have one note per ticker."""
+    if not update.notes:
+        raise HTTPException(status_code=400, detail="No notes provided")
+
+    user_email = user.get("email")
+    result = await db.execute(
+        text("""
+            INSERT INTO ticker_notes (ticker, user_email, notes)
+            VALUES (:ticker, :email, :notes)
+            ON CONFLICT (ticker, user_email) DO UPDATE SET
+                notes = EXCLUDED.notes,
+                updated_at = NOW()
+            RETURNING id, ticker, notes, user_email, created_at, updated_at
+        """),
+        {"ticker": ticker.upper(), "email": user_email, "notes": update.notes},
+    )
+    await db.commit()
+    row = result.mappings().first()
+    return dict(row)
+
+
+@router.patch("/notes/{note_id}")
 async def update_note_by_id(
-    item_id: int,
+    note_id: int,
     update: WatchlistItemUpdate,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    """Update notes on any watchlist item by ID — cross-user editing allowed.
-    Only the notes field is updatable here; target_price changes still require
-    the owner-scoped PATCH /{ticker} endpoint."""
+    """Update a ticker note by ID — any authenticated user can edit any note."""
     if update.notes is None:
         raise HTTPException(status_code=400, detail="No notes provided")
 
     result = await db.execute(
-        text("UPDATE watchlist_items SET notes = :notes WHERE id = :id RETURNING id, ticker, notes, user_email"),
-        {"notes": update.notes, "id": item_id},
+        text("""
+            UPDATE ticker_notes SET notes = :notes, updated_at = NOW()
+            WHERE id = :id
+            RETURNING id, ticker, notes, user_email, created_at, updated_at
+        """),
+        {"notes": update.notes, "id": note_id},
     )
     await db.commit()
     row = result.mappings().first()
     if not row:
-        raise HTTPException(status_code=404, detail="Watchlist item not found")
+        raise HTTPException(status_code=404, detail="Note not found")
     return dict(row)
+
+
+@router.delete("/notes/{note_id}")
+async def delete_note(
+    note_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Delete a ticker note by ID."""
+    result = await db.execute(
+        text("DELETE FROM ticker_notes WHERE id = :id RETURNING id"),
+        {"id": note_id},
+    )
+    await db.commit()
+    if not result.mappings().first():
+        raise HTTPException(status_code=404, detail="Note not found")
+    return {"message": "Note deleted"}
 
 
 @router.get("/alerts")

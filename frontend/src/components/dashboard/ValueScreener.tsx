@@ -22,9 +22,9 @@ import {
   ArrowUp, ArrowDown, ArrowUpDown, Loader2, RefreshCw, Search, X,
 } from 'lucide-react'
 import { useScreenerResults, useScannerStatus, useScreenerSectors, useScreenerIndices, useTriggerScan } from '@/hooks/useScreener'
-import { useAddToWatchlist, useWatchlistNotes } from '@/hooks/useWatchlist'
+import { useAddToWatchlist, useTickerNotes } from '@/hooks/useWatchlist'
 import { NoteIndicator } from '@/components/dashboard/NotePopup'
-import type { ScreenerScore, ScreenerWarning, WatchlistNote } from '@/lib/types'
+import type { ScreenerScore, ScreenerWarning, TickerNote } from '@/lib/types'
 import { formatDateTime } from '@/lib/dateUtils'
 
 
@@ -198,8 +198,8 @@ function WarningIndicators({ warnings }: { warnings: ScreenerWarning[] }) {
 interface ScreenerRowProps {
   stock: ScreenerScore
   onAddToWatchlist: (ticker: string) => void
-  /** Watchlist notes for this ticker (if any) — shown as an amber dot */
-  tickerNotes?: WatchlistNote[]
+  /** Ticker notes for this stock (if any) — shown as an amber dot */
+  tickerNotes?: TickerNote[]
 }
 
 function ScreenerRow({ stock, onAddToWatchlist, tickerNotes }: ScreenerRowProps) {
@@ -207,7 +207,7 @@ function ScreenerRow({ stock, onAddToWatchlist, tickerNotes }: ScreenerRowProps)
   const mosColor = (stock.margin_of_safety ?? 0) > 0 ? 'text-gain' : 'text-loss'
 
   return (
-    <tr className={`border-b border-[var(--border)] last:border-0 hover:bg-[var(--muted)] transition-colors ${scoreBgClass(stock.composite_score)}`}>
+    <tr className={`border-b border-[var(--border)] last:border-0 hover:bg-[var(--muted)] transition-colors group ${scoreBgClass(stock.composite_score)}`}>
       {/* Rank */}
       <td className="py-2.5 px-2 text-[var(--muted-foreground)] text-center font-mono text-xs">
         {stock.rank || '-'}
@@ -268,7 +268,7 @@ function ScreenerRow({ stock, onAddToWatchlist, tickerNotes }: ScreenerRowProps)
       <td className="py-2.5 px-2">
         <div className="flex items-center gap-1 justify-end">
           <WarningIndicators warnings={stock.warnings} />
-          <NoteIndicator items={tickerNotes ?? []} ticker={stock.ticker} />
+          <NoteIndicator notes={tickerNotes ?? []} ticker={stock.ticker} />
         </div>
       </td>
 
@@ -330,7 +330,7 @@ export function ValueScreener() {
   const { data: status } = useScannerStatus()
   const { data: sectorsData } = useScreenerSectors()
   const { data: indicesData } = useScreenerIndices()
-  const { data: notesByTicker } = useWatchlistNotes()
+  const { data: notesByTicker } = useTickerNotes()
   const addMutation = useAddToWatchlist()
   const triggerScan = useTriggerScan()
 

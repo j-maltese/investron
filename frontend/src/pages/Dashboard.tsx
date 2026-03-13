@@ -2,11 +2,11 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, Trash2, AlertTriangle, ExternalLink, StickyNote } from 'lucide-react'
 import { PageLayout } from '@/components/layout/PageLayout'
-import { useWatchlist, useAlerts, useAddToWatchlist, useRemoveFromWatchlist, useUpdateWatchlistItem } from '@/hooks/useWatchlist'
+import { useWatchlist, useAlerts, useAddToWatchlist, useRemoveFromWatchlist, useUpdateWatchlistItem, useTickerNotes } from '@/hooks/useWatchlist'
 import { NotePopup } from '@/components/dashboard/NotePopup'
 import { ValueScreener } from '@/components/dashboard/ValueScreener'
 import { TickerAutocomplete } from '@/components/search/TickerAutocomplete'
-import type { WatchlistView, WatchlistNote } from '@/lib/types'
+import type { WatchlistView, TickerNote } from '@/lib/types'
 
 function formatCurrency(value?: number | null): string {
   if (value == null) return 'N/A'
@@ -29,6 +29,7 @@ export function Dashboard() {
   const [view, setView] = useState<WatchlistView>('all')
   const { data: watchlistData, isLoading: watchlistLoading } = useWatchlist(view)
   const { data: alertsData } = useAlerts()
+  const { data: notesByTicker } = useTickerNotes()
   const addMutation = useAddToWatchlist()
   const removeMutation = useRemoveFromWatchlist()
   const updateMutation = useUpdateWatchlistItem()
@@ -38,13 +39,13 @@ export function Dashboard() {
   const [newTicker, setNewTicker] = useState('')
   const [newTarget, setNewTarget] = useState('')
 
-  // Inline editing state: tracks which cell is being edited (target_price only now — notes use popup)
+  // Inline editing state: tracks which cell is being edited (target_price only — notes use popup)
   const [editingCell, setEditingCell] = useState<{ ticker: string; field: 'target_price' } | null>(null)
   const [editValue, setEditValue] = useState('')
   const editRef = useRef<HTMLInputElement>(null)
 
-  // Note popup state: which ticker's notes are open
-  const [notePopup, setNotePopup] = useState<{ ticker: string; notes: WatchlistNote[]; rect: DOMRect } | null>(null)
+  // Note popup state
+  const [notePopup, setNotePopup] = useState<{ ticker: string; notes: TickerNote[]; rect: DOMRect } | null>(null)
 
   // Auto-focus the input when editing starts
   useEffect(() => {
@@ -68,18 +69,11 @@ export function Dashboard() {
 
   const cancelEdit = () => setEditingCell(null)
 
-  /** Open the note popup for a ticker, collecting ALL watchlist items (with or without notes) */
+  /** Open the note popup for a ticker using data from ticker_notes */
   const openNotePopup = useCallback((ticker: string, el: HTMLElement) => {
-    const matchingItems = watchlistData?.items?.filter((i) => i.ticker === ticker) ?? []
-    const notes: WatchlistNote[] = matchingItems.map((i) => ({
-      id: i.id,
-      ticker: i.ticker,
-      notes: i.notes ?? null,
-      user_email: i.user_email ?? '',
-      owner_name: i.owner_name ?? 'Unknown',
-    }))
+    const notes = notesByTicker?.[ticker] ?? []
     setNotePopup({ ticker, notes, rect: el.getBoundingClientRect() })
-  }, [watchlistData])
+  }, [notesByTicker])
 
   const closeNotePopup = useCallback(() => setNotePopup(null), [])
 
@@ -91,6 +85,15 @@ export function Dashboard() {
     })
     setNewTicker('')
     setNewTarget('')
+  }
+
+  /** Get a preview of the first note for a ticker (for the truncated display) */
+  const getNotesPreview = (ticker: string): string | null => {
+    const notes = notesByTicker?.[ticker]
+    if (!notes || notes.length === 0) return null
+    // Show first note text, with count if multiple
+    const first = notes[0].notes
+    return notes.length > 1 ? `${first} (+${notes.length - 1})` : first
   }
 
   return (
@@ -193,9 +196,10 @@ export function Dashboard() {
                   {watchlistData?.items?.map((item) => {
                     const isOwner = item.user_email === currentUserEmail
                     const ownerBadgeColor = OWNER_COLORS[item.owner_name ?? ''] ?? 'bg-gray-500/20 text-gray-400'
+                    const notesPreview = getNotesPreview(item.ticker)
 
                     return (
-                      <tr key={`${item.ticker}-${item.user_email}`} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--muted)] transition-colors">
+                      <tr key={`${item.ticker}-${item.user_email}`} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--muted)] transition-colors group">
                         <td className="py-2.5 px-2">
                           <div className="flex items-center gap-1.5">
                             <Link to={`/research/${item.ticker}`} className="font-semibold hover:text-[var(--accent)]">
@@ -248,10 +252,10 @@ export function Dashboard() {
                             onClick={(e) => openNotePopup(item.ticker, e.currentTarget)}
                             title="Click to view/edit notes"
                           >
-                            {item.notes ? (
+                            {notesPreview ? (
                               <>
                                 <StickyNote className="w-3 h-3 text-amber-400 shrink-0" />
-                                <span className="truncate">{item.notes}</span>
+                                <span className="truncate">{notesPreview}</span>
                               </>
                             ) : (
                               '-'
@@ -291,7 +295,7 @@ export function Dashboard() {
       {/* Note popup — portal rendered, positioned relative to the clicked cell */}
       {notePopup && (
         <NotePopup
-          items={notePopup.notes}
+          notes={notePopup.notes}
           ticker={notePopup.ticker}
           anchorRect={notePopup.rect}
           onClose={closeNotePopup}
