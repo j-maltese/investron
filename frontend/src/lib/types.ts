@@ -171,17 +171,19 @@ export interface WatchlistItem {
 
 export type WatchlistView = 'all' | 'john' | 'mark'
 
-/** A single watchlist item from the GET /api/watchlist/notes endpoint — may or may not have notes */
-export interface WatchlistNote {
+/** A ticker note from the ticker_notes table — tracks who wrote each note */
+export interface TickerNote {
   id: number
   ticker: string
-  notes: string | null
+  notes: string
   user_email: string
-  owner_name: string
+  author_name: string
+  created_at?: string
+  updated_at?: string
 }
 
 /** Notes grouped by ticker */
-export type WatchlistNotesByTicker = Record<string, WatchlistNote[]>
+export type TickerNotesByTicker = Record<string, TickerNote[]>
 
 export interface Alert {
   ticker: string

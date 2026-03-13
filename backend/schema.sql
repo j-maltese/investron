@@ -437,3 +437,23 @@ DO $$ BEGIN
         ALTER TABLE watchlist_items ADD CONSTRAINT watchlist_items_ticker_user_email_key UNIQUE (ticker, user_email);
     END IF;
 END $$;
+
+-- Ticker notes: decoupled from watchlist items so notes follow the ticker,
+-- not the watchlist entry. Any user can add notes on any ticker.
+CREATE TABLE IF NOT EXISTS ticker_notes (
+    id SERIAL PRIMARY KEY,
+    ticker VARCHAR(10) NOT NULL,
+    user_email VARCHAR(255) NOT NULL,
+    notes TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(ticker, user_email)
+);
+CREATE INDEX IF NOT EXISTS idx_ticker_notes_ticker ON ticker_notes(ticker);
+
+-- Migrate existing watchlist notes into ticker_notes (one-time, idempotent)
+INSERT INTO ticker_notes (ticker, user_email, notes, created_at)
+SELECT ticker, user_email, notes, added_at
+FROM watchlist_items
+WHERE notes IS NOT NULL AND notes != ''
+ON CONFLICT (ticker, user_email) DO NOTHING;

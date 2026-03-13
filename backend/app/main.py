@@ -125,6 +125,31 @@ async def _run_migrations():
                         row["id"], row["ticker"], row["option_symbol"], row["status"], row["opened_at"],
                     )
 
+            # Ticker notes table: decoupled from watchlist so notes follow the
+            # ticker (not the watchlist entry) and track who wrote each note.
+            await db.execute(text("""
+                CREATE TABLE IF NOT EXISTS ticker_notes (
+                    id SERIAL PRIMARY KEY,
+                    ticker VARCHAR(10) NOT NULL,
+                    user_email VARCHAR(255) NOT NULL,
+                    notes TEXT NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE(ticker, user_email)
+                )
+            """))
+            await db.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_ticker_notes_ticker ON ticker_notes(ticker)"
+            ))
+            # One-time migration: copy existing watchlist notes into ticker_notes
+            await db.execute(text("""
+                INSERT INTO ticker_notes (ticker, user_email, notes, created_at)
+                SELECT ticker, user_email, notes, added_at
+                FROM watchlist_items
+                WHERE notes IS NOT NULL AND notes != ''
+                ON CONFLICT (ticker, user_email) DO NOTHING
+            """))
+
             await db.commit()
         logger.info("Schema migrations applied successfully")
     except Exception as e:

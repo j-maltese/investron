@@ -2,7 +2,7 @@ import { supabase } from './supabase'
 import type {
   CompanySearchResult, Company, FinancialStatementsResponse, KeyMetrics,
   GrahamScoreResponse, GrowthMetrics, FilingsResponse, DCFInput, DCFResult,
-  ScenarioModelInput, ScenarioResult, WatchlistItem, Alert, WatchlistView, WatchlistNotesByTicker, ReleaseNotesResponse,
+  ScenarioModelInput, ScenarioResult, WatchlistItem, Alert, WatchlistView, TickerNote, TickerNotesByTicker, ReleaseNotesResponse,
   ScreenerResultsResponse, ScannerStatus, ChatRequest, FilingIndexStatus,
   TradingStrategy, TradingPosition, TradingOrder, TradingActivityEvent, TradingPortfolio,
 } from './types'
@@ -103,16 +103,27 @@ export const api = {
   getAlerts: () =>
     apiFetch<{ alerts: Alert[] }>('/api/watchlist/alerts'),
 
-  /** All watchlist notes grouped by ticker — used by screener to show note indicators */
-  getWatchlistNotes: () =>
-    apiFetch<{ notes: WatchlistNotesByTicker }>('/api/watchlist/notes'),
+  /** All ticker notes grouped by ticker — used by screener and watchlist */
+  getTickerNotes: () =>
+    apiFetch<{ notes: TickerNotesByTicker }>('/api/watchlist/notes'),
 
-  /** Cross-user note editing by watchlist item ID */
-  updateNoteById: (itemId: number, notes: string) =>
-    apiFetch<{ id: number; ticker: string; notes: string; user_email: string }>(`/api/watchlist/notes/${itemId}`, {
+  /** Create or update the current user's note on a ticker */
+  createTickerNote: (ticker: string, notes: string) =>
+    apiFetch<TickerNote>(`/api/watchlist/notes?ticker=${encodeURIComponent(ticker)}`, {
+      method: 'POST',
+      body: JSON.stringify({ notes }),
+    }),
+
+  /** Edit any ticker note by ID */
+  updateTickerNote: (noteId: number, notes: string) =>
+    apiFetch<TickerNote>(`/api/watchlist/notes/${noteId}`, {
       method: 'PATCH',
       body: JSON.stringify({ notes }),
     }),
+
+  /** Delete a ticker note by ID */
+  deleteTickerNote: (noteId: number) =>
+    apiFetch<{ message: string }>(`/api/watchlist/notes/${noteId}`, { method: 'DELETE' }),
 
   // Release Notes
   getReleaseNotes: () =>
