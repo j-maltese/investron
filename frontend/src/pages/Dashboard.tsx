@@ -68,13 +68,13 @@ export function Dashboard() {
 
   const cancelEdit = () => setEditingCell(null)
 
-  /** Open the note popup for a ticker, collecting all notes across watchlist items */
+  /** Open the note popup for a ticker, collecting ALL watchlist items (with or without notes) */
   const openNotePopup = useCallback((ticker: string, el: HTMLElement) => {
-    const items = watchlistData?.items?.filter((i) => i.ticker === ticker && i.notes) ?? []
-    const notes: WatchlistNote[] = items.map((i) => ({
+    const matchingItems = watchlistData?.items?.filter((i) => i.ticker === ticker) ?? []
+    const notes: WatchlistNote[] = matchingItems.map((i) => ({
       id: i.id,
       ticker: i.ticker,
-      notes: i.notes!,
+      notes: i.notes ?? null,
       user_email: i.user_email ?? '',
       owner_name: i.owner_name ?? 'Unknown',
     }))
@@ -291,7 +291,7 @@ export function Dashboard() {
       {/* Note popup — portal rendered, positioned relative to the clicked cell */}
       {notePopup && (
         <NotePopup
-          notes={notePopup.notes}
+          items={notePopup.notes}
           ticker={notePopup.ticker}
           anchorRect={notePopup.rect}
           onClose={closeNotePopup}
