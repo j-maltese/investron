@@ -1,0 +1,15 @@
+{
+  "version": "0.1.47",
+  "date": "2026-03-13",
+  "title": "v0.1.47",
+  "summary": "Release 0.1.47 includes 1 enhancement.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Improves watchlist, screener, dashboard view for notes"
+      ]
+    }
+  ]
+}
