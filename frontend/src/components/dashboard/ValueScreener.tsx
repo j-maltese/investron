@@ -268,7 +268,7 @@ function ScreenerRow({ stock, onAddToWatchlist, tickerNotes }: ScreenerRowProps)
       <td className="py-2.5 px-2">
         <div className="flex items-center gap-1 justify-end">
           <WarningIndicators warnings={stock.warnings} />
-          <NoteIndicator items={tickerNotes ?? []} ticker={stock.ticker} />
+          <NoteIndicator notes={tickerNotes ?? []} ticker={stock.ticker} />
         </div>
       </td>
 
