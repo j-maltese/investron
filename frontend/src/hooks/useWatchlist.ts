@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
-import type { WatchlistView } from '@/lib/types'
+import type { WatchlistView, WatchlistNotesByTicker } from '@/lib/types'
 
 export function useWatchlist(view?: WatchlistView) {
   return useQuery({
@@ -45,6 +45,30 @@ export function useUpdateWatchlistItem() {
     mutationFn: ({ ticker, update }: { ticker: string; update: { notes?: string; target_price?: number } }) =>
       api.updateWatchlistItem(ticker, update),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['watchlist'] })
+    },
+  })
+}
+
+/** Fetch all watchlist notes grouped by ticker — lightweight endpoint (no prices) */
+export function useWatchlistNotes() {
+  return useQuery({
+    queryKey: ['watchlist-notes'],
+    queryFn: () => api.getWatchlistNotes(),
+    staleTime: 60_000,
+    select: (data) => data.notes as WatchlistNotesByTicker,
+  })
+}
+
+/** Cross-user note editing by watchlist item ID */
+export function useUpdateNoteById() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ itemId, notes }: { itemId: number; notes: string }) =>
+      api.updateNoteById(itemId, notes),
+    onSuccess: () => {
+      // Invalidate both the notes cache and the main watchlist
+      queryClient.invalidateQueries({ queryKey: ['watchlist-notes'] })
       queryClient.invalidateQueries({ queryKey: ['watchlist'] })
     },
   })

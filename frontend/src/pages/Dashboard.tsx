@@ -1,11 +1,12 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { Plus, Trash2, AlertTriangle, ExternalLink } from 'lucide-react'
+import { Plus, Trash2, AlertTriangle, ExternalLink, StickyNote } from 'lucide-react'
 import { PageLayout } from '@/components/layout/PageLayout'
 import { useWatchlist, useAlerts, useAddToWatchlist, useRemoveFromWatchlist, useUpdateWatchlistItem } from '@/hooks/useWatchlist'
+import { NotePopup } from '@/components/dashboard/NotePopup'
 import { ValueScreener } from '@/components/dashboard/ValueScreener'
 import { TickerAutocomplete } from '@/components/search/TickerAutocomplete'
-import type { WatchlistView } from '@/lib/types'
+import type { WatchlistView, WatchlistNote } from '@/lib/types'
 
 function formatCurrency(value?: number | null): string {
   if (value == null) return 'N/A'
@@ -37,10 +38,13 @@ export function Dashboard() {
   const [newTicker, setNewTicker] = useState('')
   const [newTarget, setNewTarget] = useState('')
 
-  // Inline editing state: tracks which cell is being edited
-  const [editingCell, setEditingCell] = useState<{ ticker: string; field: 'target_price' | 'notes' } | null>(null)
+  // Inline editing state: tracks which cell is being edited (target_price only now — notes use popup)
+  const [editingCell, setEditingCell] = useState<{ ticker: string; field: 'target_price' } | null>(null)
   const [editValue, setEditValue] = useState('')
   const editRef = useRef<HTMLInputElement>(null)
+
+  // Note popup state: which ticker's notes are open
+  const [notePopup, setNotePopup] = useState<{ ticker: string; notes: WatchlistNote[]; rect: DOMRect } | null>(null)
 
   // Auto-focus the input when editing starts
   useEffect(() => {
@@ -50,22 +54,34 @@ export function Dashboard() {
     }
   }, [editingCell])
 
-  const startEditing = (ticker: string, field: 'target_price' | 'notes', currentValue: string) => {
+  const startEditing = (ticker: string, field: 'target_price', currentValue: string) => {
     setEditingCell({ ticker, field })
     setEditValue(currentValue)
   }
 
   const saveEdit = () => {
     if (!editingCell) return
-    const { ticker, field } = editingCell
-    const update = field === 'target_price'
-      ? { target_price: editValue ? parseFloat(editValue) : undefined }
-      : { notes: editValue || undefined }
-    updateMutation.mutate({ ticker, update })
+    const { ticker } = editingCell
+    updateMutation.mutate({ ticker, update: { target_price: editValue ? parseFloat(editValue) : undefined } })
     setEditingCell(null)
   }
 
   const cancelEdit = () => setEditingCell(null)
+
+  /** Open the note popup for a ticker, collecting all notes across watchlist items */
+  const openNotePopup = useCallback((ticker: string, el: HTMLElement) => {
+    const items = watchlistData?.items?.filter((i) => i.ticker === ticker && i.notes) ?? []
+    const notes: WatchlistNote[] = items.map((i) => ({
+      id: i.id,
+      ticker: i.ticker,
+      notes: i.notes!,
+      user_email: i.user_email ?? '',
+      owner_name: i.owner_name ?? 'Unknown',
+    }))
+    setNotePopup({ ticker, notes, rect: el.getBoundingClientRect() })
+  }, [watchlistData])
+
+  const closeNotePopup = useCallback(() => setNotePopup(null), [])
 
   const handleAdd = () => {
     if (!newTicker.trim()) return
@@ -227,31 +243,20 @@ export function Dashboard() {
                           )}
                         </td>
                         <td className="py-2.5 px-2 text-[var(--muted-foreground)] max-w-xs">
-                          {isOwner && editingCell?.ticker === item.ticker && editingCell.field === 'notes' ? (
-                            <input
-                              ref={editRef}
-                              type="text"
-                              value={editValue}
-                              onChange={(e) => setEditValue(e.target.value)}
-                              onBlur={saveEdit}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') saveEdit()
-                                if (e.key === 'Escape') cancelEdit()
-                              }}
-                              className="input w-full text-sm py-0.5 px-1"
-                              placeholder="Add a note..."
-                            />
-                          ) : isOwner ? (
-                            <span
-                              className="cursor-pointer hover:text-[var(--accent)] transition-colors truncate block"
-                              onClick={() => startEditing(item.ticker, 'notes', item.notes ?? '')}
-                              title="Click to edit notes"
-                            >
-                              {item.notes || '-'}
-                            </span>
-                          ) : (
-                            <span className="truncate block">{item.notes || '-'}</span>
-                          )}
+                          <span
+                            className="cursor-pointer hover:text-[var(--accent)] transition-colors truncate block flex items-center gap-1"
+                            onClick={(e) => openNotePopup(item.ticker, e.currentTarget)}
+                            title="Click to view/edit notes"
+                          >
+                            {item.notes ? (
+                              <>
+                                <StickyNote className="w-3 h-3 text-amber-400 shrink-0" />
+                                <span className="truncate">{item.notes}</span>
+                              </>
+                            ) : (
+                              '-'
+                            )}
+                          </span>
                         </td>
                         <td className="py-2.5 px-2 text-right">
                           <div className="flex items-center justify-end gap-1">
@@ -282,6 +287,16 @@ export function Dashboard() {
         {/* Value Screener — shows ranked S&P 500 stocks by composite value score */}
         <ValueScreener />
       </div>
+
+      {/* Note popup — portal rendered, positioned relative to the clicked cell */}
+      {notePopup && (
+        <NotePopup
+          notes={notePopup.notes}
+          ticker={notePopup.ticker}
+          anchorRect={notePopup.rect}
+          onClose={closeNotePopup}
+        />
+      )}
     </PageLayout>
   )
 }
