@@ -171,6 +171,57 @@ async def update_watchlist_item(
     return dict(row)
 
 
+@router.get("/notes")
+async def get_all_notes(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Get all watchlist items that have notes, grouped by ticker.
+    Used by the Value Screener to show note indicators on tickers that have
+    watchlist notes from any user."""
+    result = await db.execute(
+        text("""
+            SELECT w.id, w.ticker, w.notes, w.user_email
+            FROM watchlist_items w
+            WHERE w.notes IS NOT NULL AND w.notes != ''
+            ORDER BY w.ticker, w.added_at
+        """)
+    )
+    rows = [dict(r) for r in result.mappings().all()]
+
+    # Add display names and group by ticker
+    notes_by_ticker: dict[str, list] = {}
+    for row in rows:
+        row["owner_name"] = USER_DISPLAY_NAMES.get(row.get("user_email"), "Unknown")
+        notes_by_ticker.setdefault(row["ticker"], []).append(row)
+
+    return {"notes": notes_by_ticker}
+
+
+@router.patch("/notes/{item_id}")
+async def update_note_by_id(
+    item_id: int,
+    update: WatchlistItemUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Update notes on any watchlist item by ID — cross-user editing allowed.
+    Only the notes field is updatable here; target_price changes still require
+    the owner-scoped PATCH /{ticker} endpoint."""
+    if update.notes is None:
+        raise HTTPException(status_code=400, detail="No notes provided")
+
+    result = await db.execute(
+        text("UPDATE watchlist_items SET notes = :notes WHERE id = :id RETURNING id, ticker, notes, user_email"),
+        {"notes": update.notes, "id": item_id},
+    )
+    await db.commit()
+    row = result.mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Watchlist item not found")
+    return dict(row)
+
+
 @router.get("/alerts")
 async def get_alerts(
     db: AsyncSession = Depends(get_db),

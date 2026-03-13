@@ -22,8 +22,9 @@ import {
   ArrowUp, ArrowDown, ArrowUpDown, Loader2, RefreshCw, Search, X,
 } from 'lucide-react'
 import { useScreenerResults, useScannerStatus, useScreenerSectors, useScreenerIndices, useTriggerScan } from '@/hooks/useScreener'
-import { useAddToWatchlist } from '@/hooks/useWatchlist'
-import type { ScreenerScore, ScreenerWarning } from '@/lib/types'
+import { useAddToWatchlist, useWatchlistNotes } from '@/hooks/useWatchlist'
+import { NoteIndicator } from '@/components/dashboard/NotePopup'
+import type { ScreenerScore, ScreenerWarning, WatchlistNote } from '@/lib/types'
 import { formatDateTime } from '@/lib/dateUtils'
 
 
@@ -197,9 +198,11 @@ function WarningIndicators({ warnings }: { warnings: ScreenerWarning[] }) {
 interface ScreenerRowProps {
   stock: ScreenerScore
   onAddToWatchlist: (ticker: string) => void
+  /** Watchlist notes for this ticker (if any) — shown as an amber dot */
+  tickerNotes?: WatchlistNote[]
 }
 
-function ScreenerRow({ stock, onAddToWatchlist }: ScreenerRowProps) {
+function ScreenerRow({ stock, onAddToWatchlist, tickerNotes }: ScreenerRowProps) {
   // Margin of Safety coloring: green if undervalued (positive), red if overvalued
   const mosColor = (stock.margin_of_safety ?? 0) > 0 ? 'text-gain' : 'text-loss'
 
@@ -261,9 +264,12 @@ function ScreenerRow({ stock, onAddToWatchlist }: ScreenerRowProps) {
           : '-'}
       </td>
 
-      {/* Warning Flags */}
+      {/* Warning Flags + Note indicator */}
       <td className="py-2.5 px-2">
-        <WarningIndicators warnings={stock.warnings} />
+        <div className="flex items-center gap-1 justify-end">
+          <WarningIndicators warnings={stock.warnings} />
+          <NoteIndicator notes={tickerNotes ?? []} ticker={stock.ticker} />
+        </div>
       </td>
 
       {/* Actions: Research link + Add to Watchlist */}
@@ -324,6 +330,7 @@ export function ValueScreener() {
   const { data: status } = useScannerStatus()
   const { data: sectorsData } = useScreenerSectors()
   const { data: indicesData } = useScreenerIndices()
+  const { data: notesByTicker } = useWatchlistNotes()
   const addMutation = useAddToWatchlist()
   const triggerScan = useTriggerScan()
 
@@ -505,6 +512,7 @@ export function ValueScreener() {
                     key={stock.ticker}
                     stock={stock}
                     onAddToWatchlist={(ticker) => addMutation.mutate({ ticker })}
+                    tickerNotes={notesByTicker?.[stock.ticker]}
                   />
                 ))}
                 {/* Sentinel row: triggers IntersectionObserver to load more */}
