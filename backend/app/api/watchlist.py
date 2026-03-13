@@ -176,14 +176,13 @@ async def get_all_notes(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    """Get all watchlist items that have notes, grouped by ticker.
-    Used by the Value Screener to show note indicators on tickers that have
-    watchlist notes from any user."""
+    """Get all watchlist items grouped by ticker — includes items with AND
+    without notes so the screener can show a pencil icon for any watchlisted
+    ticker and an amber dot for tickers that have notes."""
     result = await db.execute(
         text("""
             SELECT w.id, w.ticker, w.notes, w.user_email
             FROM watchlist_items w
-            WHERE w.notes IS NOT NULL AND w.notes != ''
             ORDER BY w.ticker, w.added_at
         """)
     )

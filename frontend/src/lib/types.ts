@@ -171,11 +171,11 @@ export interface WatchlistItem {
 
 export type WatchlistView = 'all' | 'john' | 'mark'
 
-/** A single note entry from the GET /api/watchlist/notes endpoint */
+/** A single watchlist item from the GET /api/watchlist/notes endpoint — may or may not have notes */
 export interface WatchlistNote {
   id: number
   ticker: string
-  notes: string
+  notes: string | null
   user_email: string
   owner_name: string
 }
