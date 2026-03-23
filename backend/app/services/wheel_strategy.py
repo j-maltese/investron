@@ -608,14 +608,24 @@ async def _sync_option_orders(db: AsyncSession, strategy_id: str) -> None:
                         },
                     )
 
-            elif status["status"] in ("cancelled", "rejected"):
-                # Order didn't fill — log for visibility
+            elif status["status"] in ("cancelled", "rejected", "expired"):
+                # Order didn't fill — close the orphaned position so it doesn't
+                # linger as "pending" on the Positions tab forever.
+                if order.get("position_id"):
+                    await trading_db.close_position(
+                        db, order["position_id"], status["status"],
+                    )
                 await trading_db.log_activity(
-                    db, strategy_id, "error",
+                    db, strategy_id, "blocked_order_failed",
                     f"Order {status['status']}: {order['side']} {order.get('ticker')} "
-                    f"({order.get('option_symbol', '')})",
+                    f"({order.get('option_symbol', '')}) — position cleaned up",
                     ticker=order.get("ticker"),
-                    details={"order_id": order["id"], "status": status["status"]},
+                    details={
+                        "order_id": order["id"], "status": status["status"],
+                        "position_id": order.get("position_id"),
+                        "reason": "Day order did not fill before market close"
+                        if status["status"] == "expired" else status["status"],
+                    },
                 )
 
         except Exception as e:
@@ -1018,19 +1028,28 @@ async def _sell_put(
     # Find puts to sell, ranked by score (best first).
     # Returns multiple candidates so we can fall back if the top pick
     # fails the Alpaca tradability check.
-    ranked = _select_best_option(
+    ranked, rejections = _select_best_option(
         chain, "put", config, current_price, max_strike=max_strike,
     )
 
     if not ranked:
+        # Cooldown so we don't spam the log every cycle for illiquid chains
+        _failed_ticker_cooldowns[ticker] = datetime.now(timezone.utc) + timedelta(
+            minutes=FAILED_TICKER_COOLDOWN_MINUTES
+        )
+        # Build human-readable rejection summary (e.g. "delta: 5, bid_zero: 3")
+        rej_summary = ", ".join(f"{k}: {v}" for k, v in rejections.items() if v > 0)
         await trading_db.log_activity(
             db, strategy_id, "blocked_no_options",
             f"No suitable puts for {ticker}: {len(chain)} contracts fetched, "
-            f"0 passed filters (max_strike=${max_strike:.0f})",
+            f"0 passed filters (max_strike=${max_strike:.0f}) — "
+            f"rejections: {rej_summary or 'none matched type'} "
+            f"(cooldown {FAILED_TICKER_COOLDOWN_MINUTES}min)",
             ticker=ticker,
             details={
                 "ticker": ticker, "candidates_total": len(chain),
                 "candidates_passed": 0, "max_strike": max_strike,
+                "rejections": {k: v for k, v in rejections.items() if v > 0},
             },
         )
         return 0
@@ -1223,6 +1242,12 @@ async def _sell_call(
     strategy_id = strategy["id"]
     config = strategy.get("config", {})
 
+    # Cooldown check: skip tickers that recently failed to find suitable options
+    # (e.g. illiquid chain like MTG) to avoid spamming the activity log every 5min
+    cooldown_until = _failed_ticker_cooldowns.get(ticker)
+    if cooldown_until and datetime.now(timezone.utc) < cooldown_until:
+        return False  # Silently skip — already logged when the failure occurred
+
     # Check if we already have a call position for this ticker
     existing_call = await _get_open_position_for_ticker(
         db, strategy_id, ticker, wheel_phase="selling_calls"
@@ -1269,19 +1294,28 @@ async def _sell_call(
         return False
 
     # Find calls to sell, ranked by score (best first)
-    ranked = _select_best_option(
+    ranked, rejections = _select_best_option(
         chain, "call", config, current_price, min_strike=min_strike,
     )
 
     if not ranked:
+        # Cooldown so we don't spam the log every cycle for illiquid chains
+        # (e.g. MTG: all OTM calls have $0 bid, retrying every 5min is noise)
+        _failed_ticker_cooldowns[ticker] = datetime.now(timezone.utc) + timedelta(
+            minutes=FAILED_TICKER_COOLDOWN_MINUTES
+        )
+        rej_summary = ", ".join(f"{k}: {v}" for k, v in rejections.items() if v > 0)
         await trading_db.log_activity(
             db, strategy_id, "blocked_no_options",
             f"No suitable calls for {ticker}: {len(chain)} contracts fetched, "
-            f"0 passed filters (min_strike=${min_strike:.2f}, adj_basis=${adjusted_basis:.2f})",
+            f"0 passed filters (min_strike=${min_strike:.2f}, adj_basis=${adjusted_basis:.2f}) — "
+            f"rejections: {rej_summary or 'none matched type'} "
+            f"(cooldown {FAILED_TICKER_COOLDOWN_MINUTES}min)",
             ticker=ticker,
             details={
                 "ticker": ticker, "candidates_total": len(chain),
                 "min_strike": min_strike, "adjusted_basis": adjusted_basis,
+                "rejections": {k: v for k, v in rejections.items() if v > 0},
             },
         )
         return False
@@ -1472,9 +1506,13 @@ def _select_best_option(
       - 30% delta proximity to target midpoint (closer = better risk/reward)
       - 30% DTE proximity to target midpoint (sweet spot for time decay)
 
-    Returns a list of candidates sorted by score (highest first), each with
-    internal metadata (_score, _dte, _yield_annualized, _candidates_passed).
-    Returns empty list if no candidates pass filters.
+    Returns a tuple of (candidates, rejections):
+      - candidates: list sorted by score (highest first), each with internal
+        metadata (_score, _dte, _yield_annualized, _candidates_passed).
+        Empty list if no candidates pass filters.
+      - rejections: dict of filter stage → count of contracts rejected at that
+        stage (e.g. {"delta": 8, "bid_zero": 4}). Useful for diagnostics when
+        the chain has options but none pass.
     """
     # Extract config thresholds with defaults
     delta_min = config.get("delta_min", 0.15)
@@ -1494,6 +1532,13 @@ def _select_best_option(
     candidates: list[dict] = []
     greeks_available = False
 
+    # Track rejection reasons for diagnostics — helps debug why chains
+    # have zero passing candidates (e.g. MTG: all OTM calls have $0 bid)
+    rejections = {
+        "wrong_type": 0, "strike": 0, "dte": 0, "delta": 0,
+        "bid_zero": 0, "open_interest": 0, "yield": 0,
+    }
+
     for contract in chain:
         symbol = contract.get("symbol", "")
 
@@ -1504,6 +1549,7 @@ def _select_best_option(
             continue  # Invalid symbol — skip
 
         if parsed["option_type"] != option_type:
+            rejections["wrong_type"] += 1
             continue  # Wrong type (e.g., we want puts but this is a call)
 
         strike = parsed["strike"]
@@ -1511,13 +1557,16 @@ def _select_best_option(
 
         # --- Step 2: Strike constraint ---
         if max_strike is not None and strike > max_strike:
+            rejections["strike"] += 1
             continue  # Can't afford this strike (for puts)
         if min_strike is not None and strike < min_strike:
+            rejections["strike"] += 1
             continue  # Strike too low (for calls, below cost basis)
 
         # --- Step 3: DTE filter ---
         dte = (exp_date - today).days
         if dte < exp_min_days or dte > exp_max_days:
+            rejections["dte"] += 1
             continue  # Outside our expiration window
 
         # --- Step 4: Delta filter ---
@@ -1529,6 +1578,7 @@ def _select_best_option(
             greeks_available = True
             abs_delta = abs(delta)
             if abs_delta < delta_min or abs_delta > delta_max:
+                rejections["delta"] += 1
                 continue  # Outside our delta range
         else:
             # Moneyness proxy for delta:
@@ -1543,12 +1593,14 @@ def _select_best_option(
                 proxy = max(0, min(1, 1 - (strike - stock_price) / stock_price))
 
             if proxy < delta_min or proxy > delta_max:
+                rejections["delta"] += 1
                 continue
             abs_delta = proxy
 
         # --- Step 5: Bid price validity ---
         bid = contract.get("bid_price")
         if not bid or bid <= 0:
+            rejections["bid_zero"] += 1
             continue  # Can't sell for nothing
 
         # --- Step 5b: Open interest filter ---
@@ -1558,6 +1610,7 @@ def _select_best_option(
         oi_min = config.get("open_interest_min", 0)
         oi = contract.get("open_interest")
         if oi is not None and oi_min > 0 and oi < oi_min:
+            rejections["open_interest"] += 1
             continue  # Too illiquid — would likely not fill
 
         # --- Step 6: Annualized yield filter ---
@@ -1569,6 +1622,7 @@ def _select_best_option(
             yield_ann = 0
 
         if yield_ann < yield_min or yield_ann > yield_max:
+            rejections["yield"] += 1
             continue  # Premium too low or suspiciously high
 
         # --- Step 7: Score the candidate ---
@@ -1610,7 +1664,7 @@ def _select_best_option(
         )
 
     if not candidates:
-        return []
+        return [], rejections
 
     # Tag candidates count on all candidates (for logging)
     for c in candidates:
@@ -1620,7 +1674,7 @@ def _select_best_option(
     # Callers typically use the top pick, but can iterate if the best
     # option fails a tradability check on Alpaca.
     candidates.sort(key=lambda c: c["_score"], reverse=True)
-    return candidates
+    return candidates, rejections
 
 
 # ---------------------------------------------------------------------------
@@ -1714,7 +1768,7 @@ async def _manage_put_position(
         available_cash = float(strategy_data["current_cash"]) if strategy_data else 0
         actual_max_strike = min(new_max_strike, available_cash / 100)
 
-        best_new = _select_best_option(
+        best_new, _roll_rejections = _select_best_option(
             chain, "put", config, current_price, max_strike=actual_max_strike,
         )
 
