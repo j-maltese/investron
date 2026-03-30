@@ -1,0 +1,15 @@
+{
+  "version": "0.1.51",
+  "date": "2026-03-30",
+  "title": "v0.1.51",
+  "summary": "Release 0.1.51 includes 1 enhancement.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Makes dashboard cards flexible, hidable, resizable"
+      ]
+    }
+  ]
+}
