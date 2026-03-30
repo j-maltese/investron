@@ -1,11 +1,13 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { Plus, Trash2, AlertTriangle, ExternalLink, StickyNote } from 'lucide-react'
+import { Plus, Trash2, AlertTriangle, ExternalLink, StickyNote, Menu, GripHorizontal } from 'lucide-react'
 import { PageLayout } from '@/components/layout/PageLayout'
 import { useWatchlist, useAlerts, useAddToWatchlist, useRemoveFromWatchlist, useUpdateWatchlistItem, useTickerNotes } from '@/hooks/useWatchlist'
 import { NotePopup } from '@/components/dashboard/NotePopup'
 import { ValueScreener } from '@/components/dashboard/ValueScreener'
+import { DashboardSidebar, type CardKey } from '@/components/dashboard/DashboardSidebar'
 import { TickerAutocomplete } from '@/components/search/TickerAutocomplete'
+import { useResizable } from '@/hooks/useResizable'
 import type { WatchlistView, TickerNote } from '@/lib/types'
 
 function formatCurrency(value?: number | null): string {
@@ -38,6 +40,31 @@ export function Dashboard() {
 
   const [newTicker, setNewTicker] = useState('')
   const [newTarget, setNewTarget] = useState('')
+
+  // Sidebar open/close state
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+
+  // Which cards are visible — persisted to localStorage
+  const [visibleCards, setVisibleCards] = useState<Record<CardKey, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem('dashboard-visible-cards')
+      return saved ? JSON.parse(saved) : { watchlist: true, screener: true }
+    } catch {
+      return { watchlist: true, screener: true }
+    }
+  })
+
+  const toggleCard = (key: CardKey) => {
+    setVisibleCards(prev => {
+      const next = { ...prev, [key]: !prev[key] }
+      localStorage.setItem('dashboard-visible-cards', JSON.stringify(next))
+      return next
+    })
+  }
+
+  // Per-card resizable heights
+  const watchlistResize = useResizable('watchlist', 420)
+  const screenerResize = useResizable('screener', 650)
 
   // Inline editing state: tracks which cell is being edited (target_price only — notes use popup)
   const [editingCell, setEditingCell] = useState<{ ticker: string; field: 'target_price' } | null>(null)
@@ -98,8 +125,24 @@ export function Dashboard() {
 
   return (
     <PageLayout>
+      <DashboardSidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        visibleCards={visibleCards}
+        onToggle={toggleCard}
+      />
+
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="p-1.5 rounded hover:bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+            title="Customize dashboard"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <h1 className="text-2xl font-bold">Dashboard</h1>
+        </div>
 
         {/* Alerts */}
         {alertsData?.alerts && alertsData.alerts.length > 0 && (
@@ -122,7 +165,11 @@ export function Dashboard() {
         )}
 
         {/* Watchlist */}
-        <div className="card">
+        {visibleCards.watchlist && (
+        <div
+          className="card flex flex-col"
+          style={{ height: watchlistResize.height }}
+        >
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold text-lg">Watchlist</h2>
             {/* View toggle pills */}
@@ -172,7 +219,7 @@ export function Dashboard() {
             </button>
           </div>
 
-          {/* Watchlist table */}
+          {/* Watchlist table — overflow-auto so it scrolls within the resizable card height */}
           {watchlistLoading ? (
             <div className="text-center py-8 text-[var(--muted-foreground)]">Loading watchlist...</div>
           ) : watchlistData?.items?.length === 0 ? (
@@ -180,9 +227,9 @@ export function Dashboard() {
               {view === 'all' ? 'No watchlist items yet.' : `No items in ${VIEW_OPTIONS.find(o => o.value === view)?.label}'s watchlist.`}
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="overflow-auto flex-1 min-h-0">
               <table className="w-full text-sm">
-                <thead>
+                <thead className="sticky top-0 z-10 bg-[var(--card)]">
                   <tr className="border-b border-[var(--border)]">
                     <th className="text-left py-2 px-2 font-medium text-[var(--muted-foreground)]">Ticker</th>
                     <th className="text-left py-2 px-2 font-medium text-[var(--muted-foreground)]">Company</th>
@@ -286,10 +333,25 @@ export function Dashboard() {
               </table>
             </div>
           )}
+
+          {/* Drag-to-resize handle at bottom of watchlist card */}
+          <div
+            className="flex items-center justify-center h-4 -mx-4 -mb-4 mt-auto cursor-row-resize rounded-b-lg hover:bg-[var(--accent)]/10 transition-colors select-none"
+            onMouseDown={watchlistResize.handleMouseDown}
+            title="Drag to resize"
+          >
+            <GripHorizontal className="w-5 h-5 text-[var(--border)]" />
+          </div>
         </div>
+        )}
 
         {/* Value Screener — shows ranked S&P 500 stocks by composite value score */}
-        <ValueScreener />
+        {visibleCards.screener && (
+          <ValueScreener
+            height={screenerResize.height}
+            onResizeMouseDown={screenerResize.handleMouseDown}
+          />
+        )}
       </div>
 
       {/* Note popup — portal rendered, positioned relative to the clicked cell */}

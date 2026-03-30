@@ -12,7 +12,8 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useAIChat } from '@/hooks/useAIChat'
 import { useFilingIndex } from '@/hooks/useFilingIndex'
-import { Send, Square, Trash2, Sparkles, AlertCircle, Search, FileText, RefreshCw, Loader2 } from 'lucide-react'
+import { useResizable } from '@/hooks/useResizable'
+import { Send, Square, Trash2, Sparkles, AlertCircle, Search, FileText, RefreshCw, Loader2, GripHorizontal } from 'lucide-react'
 
 interface AIAnalysisTabProps {
   ticker: string
@@ -232,6 +233,7 @@ export function AIAnalysisTab({ ticker }: AIAnalysisTabProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const suggestions = filingsReady ? [...FILING_SUGGESTIONS, ...BASE_SUGGESTIONS].slice(0, 4) : BASE_SUGGESTIONS
+  const { height, handleMouseDown: handleResizeMouseDown } = useResizable('ai-chat', window.innerHeight - 280)
 
   // Auto-scroll on new content
   useEffect(() => {
@@ -261,7 +263,7 @@ export function AIAnalysisTab({ ticker }: AIAnalysisTabProps) {
   }
 
   return (
-    <div className="card flex flex-col" style={{ height: 'calc(100vh - 280px)', minHeight: '400px' }}>
+    <div className="card flex flex-col" style={{ height: Math.max(400, height), minHeight: '400px' }}>
       {/* Header */}
       <div className="flex items-center justify-between pb-3 border-b border-[var(--border)]">
         <div className="flex items-center gap-2">
@@ -367,6 +369,15 @@ export function AIAnalysisTab({ ticker }: AIAnalysisTabProps) {
         <p className="text-[10px] text-[var(--muted-foreground)] mt-1.5 text-center">
           For research purposes only — not investment advice. Shift+Enter for new line.
         </p>
+      </div>
+
+      {/* Drag-to-resize handle */}
+      <div
+        className="flex items-center justify-center h-4 -mx-4 -mb-4 mt-0 cursor-row-resize rounded-b-lg hover:bg-[var(--accent)]/10 transition-colors select-none"
+        onMouseDown={handleResizeMouseDown}
+        title="Drag to resize"
+      >
+        <GripHorizontal className="w-5 h-5 text-[var(--border)]" />
       </div>
     </div>
   )
