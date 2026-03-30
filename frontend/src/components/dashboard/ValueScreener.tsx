@@ -19,7 +19,7 @@ import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import {
   TrendingDown, Clock, Plus, ExternalLink,
-  ArrowUp, ArrowDown, ArrowUpDown, Loader2, RefreshCw, Search, X,
+  ArrowUp, ArrowDown, ArrowUpDown, Loader2, RefreshCw, Search, X, GripHorizontal,
 } from 'lucide-react'
 import { useScreenerResults, useScannerStatus, useScreenerSectors, useScreenerIndices, useTriggerScan } from '@/hooks/useScreener'
 import { useAddToWatchlist, useTickerNotes } from '@/hooks/useWatchlist'
@@ -296,7 +296,14 @@ function ScreenerRow({ stock, onAddToWatchlist, tickerNotes }: ScreenerRowProps)
 // ValueScreener — the main panel component
 // ============================================================================
 
-export function ValueScreener() {
+interface ValueScreenerProps {
+  /** Fixed height for the card (px). When set, inner table scrolls within this height. */
+  height?: number
+  /** MouseDown handler for the bottom drag handle — passed from parent's useResizable */
+  onResizeMouseDown?: (e: React.MouseEvent) => void
+}
+
+export function ValueScreener({ height, onResizeMouseDown }: ValueScreenerProps) {
   // Sorting state — default: highest composite score first
   const [sortBy, setSortBy] = useState('composite_score')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
@@ -377,7 +384,10 @@ export function ValueScreener() {
   const sortProps = { currentSort: sortBy, currentOrder: sortOrder, onSort: handleSort }
 
   return (
-    <div className="card">
+    <div
+      className="card flex flex-col"
+      style={height ? { height } : undefined}
+    >
       {/* Header: title, scan status, and sector filter */}
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
         <div>
@@ -471,25 +481,28 @@ export function ValueScreener() {
         </div>
       </div>
 
-      {/* Results table (or loading/empty states) */}
-      {isLoading ? (
-        <div className="text-center py-8 text-[var(--muted-foreground)] flex items-center justify-center gap-2">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          Loading screener results...
-        </div>
-      ) : isError ? (
-        <div className="text-center py-8 text-loss">
-          Failed to load screener results. Check your connection and try refreshing.
-        </div>
-      ) : !data?.results?.length ? (
-        <div className="text-center py-8 text-[var(--muted-foreground)]">
-          {status?.is_running
-            ? 'Background scanner is populating data — results will appear shortly...'
-            : 'No screener results yet. The background scanner will start populating data automatically.'}
-        </div>
-      ) : (
-        <>
-          <div className="overflow-auto max-h-[600px]">
+      {/* Results table (or loading/empty states).
+          When a fixed height is set: this wrapper is flex-1 + overflow-auto so the table
+          scrolls within the card's height. Without a height prop, it falls back to the
+          inner max-h-[600px] constraint (same behavior as before). */}
+      <div className={height ? 'flex-1 overflow-auto min-h-0' : ''}>
+        {isLoading ? (
+          <div className="text-center py-8 text-[var(--muted-foreground)] flex items-center justify-center gap-2">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            Loading screener results...
+          </div>
+        ) : isError ? (
+          <div className="text-center py-8 text-loss">
+            Failed to load screener results. Check your connection and try refreshing.
+          </div>
+        ) : !data?.results?.length ? (
+          <div className="text-center py-8 text-[var(--muted-foreground)]">
+            {status?.is_running
+              ? 'Background scanner is populating data — results will appear shortly...'
+              : 'No screener results yet. The background scanner will start populating data automatically.'}
+          </div>
+        ) : (
+          <div className={height ? '' : 'overflow-auto max-h-[600px]'}>
             <table className="w-full text-sm">
               <thead className="sticky top-0 z-10 bg-[var(--card)]">
                 <tr className="border-b border-[var(--border)]">
@@ -526,7 +539,18 @@ export function ValueScreener() {
               </tbody>
             </table>
           </div>
-        </>
+        )}
+      </div>
+
+      {/* Drag-to-resize handle — only shown when a height prop is passed */}
+      {onResizeMouseDown && (
+        <div
+          className="flex items-center justify-center h-4 -mx-4 -mb-4 mt-2 cursor-row-resize rounded-b-lg hover:bg-[var(--accent)]/10 transition-colors select-none"
+          onMouseDown={onResizeMouseDown}
+          title="Drag to resize"
+        >
+          <GripHorizontal className="w-5 h-5 text-[var(--border)]" />
+        </div>
       )}
     </div>
   )
