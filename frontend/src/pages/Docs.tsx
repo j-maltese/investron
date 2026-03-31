@@ -4,10 +4,11 @@ import { PageLayout } from '@/components/layout/PageLayout'
 import { useReleaseNotes } from '@/hooks/useReleaseNotes'
 import type { ReleaseNote, ReleaseNoteSection } from '@/lib/types'
 
-type Tab = 'user' | 'wheel' | 'developer' | 'releases'
+type Tab = 'user' | 'buffett' | 'wheel' | 'developer' | 'releases'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'user', label: 'User Guide' },
+  { key: 'buffett', label: 'Buffett Scorecard Guide' },
   { key: 'wheel', label: 'Wheel Strategy Guide' },
   { key: 'developer', label: 'Developer Guide' },
   { key: 'releases', label: 'Release Notes' },
@@ -41,6 +42,7 @@ export function Docs() {
         {/* Tab content */}
         <div className="max-w-4xl">
           {activeTab === 'user' && <UserGuide />}
+          {activeTab === 'buffett' && <BuffettGuide />}
           {activeTab === 'wheel' && <WheelGuide />}
           {activeTab === 'developer' && <DeveloperGuide />}
           {activeTab === 'releases' && <ReleaseNotesTab />}
@@ -561,6 +563,203 @@ function UserGuide() {
           </ul>
         </SubSection>
       </Section>
+    </div>
+  )
+}
+
+/* ─── Buffett Scorecard Guide ─── */
+
+function BuffettGuide() {
+  return (
+    <div className="space-y-8">
+
+      <Section title="Overview">
+        <p>
+          The <strong>Buffett Scorecard</strong> evaluates any publicly traded stock against Warren Buffett's four
+          investing rules, as documented at <em>BuffettsBooks.com</em>. It is not a buy/sell signal — it is a structured
+          framework for fundamental due diligence that surfaces the quantitative data behind each rule so you can make an
+          informed judgment.
+        </p>
+        <p>
+          Select a ticker using the search box in the top-right of the card. The card loads all four rules automatically
+          (data is cached for 15 minutes). Your last selected ticker is saved in the browser and restored on reload.
+        </p>
+      </Section>
+
+      <Section title="Rule 1 — Vigilant Leadership">
+        <p>Evaluates current financial health and management discipline via three quantitative metrics and one contextual indicator.</p>
+
+        <SubSection title="Debt-to-Equity Ratio (D/E)">
+          <p><strong>Source:</strong> yfinance <code>debtToEquity</code> — returned as a percentage (e.g. 42.3 = a ratio of 0.423x). The card divides by 100 for display.</p>
+          <p><strong>Formula:</strong> Total Long-Term Debt ÷ Shareholders' Equity</p>
+          <p><strong>Thresholds:</strong> &lt; 0.50x = Pass, 0.50–1.00x = Borderline, ≥ 1.00x = Fail</p>
+          <p>Companies with low debt survive recessions and don't divert profits to interest payments. If D/E is negative (e.g. McDonald's, Starbucks — companies that have bought back more stock than their book equity), the card flags negative equity and marks Rule 4 inapplicable. For financial sector companies (banks, insurers), a warning is shown since high leverage is structural, not a risk signal.</p>
+        </SubSection>
+
+        <SubSection title="Current Ratio">
+          <p><strong>Source:</strong> yfinance <code>currentRatio</code></p>
+          <p><strong>Formula:</strong> Current Assets ÷ Current Liabilities</p>
+          <p><strong>Thresholds:</strong> &gt; 1.50x = Pass, 1.00–1.50x = Borderline, &lt; 1.00x = Fail</p>
+          <p>A ratio above 1.0 means the company can cover all short-term obligations without new borrowing. Buffett wants management that keeps the balance sheet clean.</p>
+        </SubSection>
+
+        <SubSection title="Return on Equity (ROE)">
+          <p><strong>Source:</strong> yfinance <code>returnOnEquity</code> (decimal, e.g. 0.184 = 18.4%)</p>
+          <p><strong>Formula:</strong> Net Income ÷ Shareholders' Equity</p>
+          <p><strong>Thresholds:</strong> &gt; 15% = Pass, 10–15% = Borderline, &lt; 10% = Fail</p>
+          <p>Consistently high ROE signals a durable competitive advantage — the company isn't just lucky, it repeatedly earns high returns on the equity entrusted to it.</p>
+        </SubSection>
+
+        <SubSection title="Price-to-Book Ratio (P/B) — context only">
+          <p><strong>Source:</strong> yfinance <code>priceToBook</code></p>
+          <p><strong>Formula:</strong> Market Price per Share ÷ Book Value per Share</p>
+          <p>No pass/fail threshold. A high P/B means the market is already pricing in future growth, leaving less margin of safety. A P/B near 1.0 means you are paying close to liquidation value.</p>
+        </SubSection>
+      </Section>
+
+      <Section title="Rule 2 — Long-Term Prospects">
+        <p>Rule 2 is informational rather than scored. It shows the historical trajectory of earnings and revenue, and provides an on-demand AI durability analysis.</p>
+
+        <SubSection title="EPS (Diluted) History">
+          <p><strong>Source:</strong> EDGAR annual income statements — <code>eps_diluted</code> field (falls back to <code>eps_basic</code>)</p>
+          <p><strong>Chart:</strong> Sparkline with one point per fiscal year. X-axis shows the first and last year. Hover for the exact dollar value.</p>
+          <p><strong>Consecutive Positive EPS Years:</strong> Number of consecutive fiscal years at the end of the series where EPS was positive. A long streak (7–10+ years) signals consistent profitability.</p>
+          <p><strong>EPS CAGR:</strong> (EPS_latest / EPS_oldest) ^ (1 / (years − 1)) − 1. Smooths year-to-year noise to show the true growth trajectory.</p>
+        </SubSection>
+
+        <SubSection title="Revenue History">
+          <p><strong>Source:</strong> EDGAR annual income statements — <code>revenue</code> field. Displayed in billions (÷ 1,000,000,000).</p>
+          <p><strong>Revenue CAGR:</strong> Same formula as EPS CAGR applied to revenue. A company growing revenue at &gt;5–10%/yr is expanding its economic footprint.</p>
+        </SubSection>
+
+        <SubSection title="AI Durability Analysis (on-demand)">
+          <p>Click <strong>Analyze</strong> to trigger a streaming AI analysis using a reasoning model. It assesses: (1) Will this product or service exist in 20–30 years? (2) Is the business model understandable and predictable? (3) What are the key long-term durability risks? The AI is provided sector, industry, financial history, and recent news headlines. Not auto-triggered — each run costs an API call.</p>
+        </SubSection>
+      </Section>
+
+      <Section title="Rule 3 — Stable & Understandable">
+        <p>Rule 3 evaluates multi-year trends using historical EDGAR filings. All four charts are annual, one data point per fiscal year (typically 5–10 years of history).</p>
+
+        <SubSection title="Book Value per Share (BV/Share)">
+          <p><strong>Source:</strong> EDGAR annual balance sheets</p>
+          <p><strong>Formula:</strong> Stockholders' Equity ÷ Shares Outstanding</p>
+          <p><strong>Good direction:</strong> Increasing. Steady BV growth means the company is retaining and compounding value. This is also the foundation of the Rule 4 intrinsic value formula.</p>
+        </SubSection>
+
+        <SubSection title="D/E Ratio History">
+          <p><strong>Source:</strong> EDGAR annual balance sheets</p>
+          <p><strong>Formula:</strong> Long-Term Debt ÷ Stockholders' Equity (raw ratio, not the yfinance % form used in Rule 1)</p>
+          <p><strong>Good direction:</strong> Declining or stable. Improving leverage over time signals strengthening financial health.</p>
+        </SubSection>
+
+        <SubSection title="EPS Trend">
+          <p><strong>Source:</strong> EDGAR annual income statements — <code>eps_diluted</code></p>
+          <p><strong>Good direction:</strong> Increasing. Consistently growing EPS indicates durable earnings power.</p>
+        </SubSection>
+
+        <SubSection title="ROE Trend">
+          <p><strong>Source:</strong> EDGAR income statements + balance sheets, joined by fiscal year</p>
+          <p><strong>Formula:</strong> Net Income ÷ Stockholders' Equity (decimal)</p>
+          <p><strong>Good direction:</strong> Stable or increasing. Consistently above 15% year after year is a hallmark of a durable moat.</p>
+        </SubSection>
+
+        <SubSection title="Scoring">
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>PASS</strong> — all four trends moving in the good direction</li>
+            <li><strong>MIXED</strong> — 2–3 of 4 trending well</li>
+            <li><strong>FAIL</strong> — fewer than 2 trending well</li>
+            <li><strong>N/A</strong> — fewer than 3 years of EDGAR data</li>
+          </ul>
+        </SubSection>
+      </Section>
+
+      <Section title="Rule 4 — Intrinsic Value">
+        <p>
+          Rule 4 computes an intrinsic value (IV) using the <strong>BuffettsBooks.com Book Value DCF methodology</strong> and
+          compares it to the current market price. Rule 4 is inapplicable when book equity is negative or when fewer than 3
+          years of EDGAR history are available — in those cases, the AI Valuation is offered instead.
+        </p>
+
+        <SubSection title="Inputs">
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>Current BV/Share:</strong> yfinance <code>bookValue</code> (dollars per share)</li>
+            <li><strong>Oldest BV/Share:</strong> Earliest EDGAR balance sheet — Stockholders' Equity ÷ Shares Outstanding</li>
+            <li><strong>Annual Dividend:</strong> yfinance <code>dividendRate</code> (annualized dollars per share). Fallback: Current Price × <code>dividendYield</code>. Zero if no dividend — Rule 4 is still valid.</li>
+            <li><strong>10Y Treasury Rate:</strong> yfinance <code>^TNX</code> → regularMarketPrice ÷ 100 (cached 24h). Clamped to a minimum of 0.001 to avoid division by zero. Override-able in the card UI.</li>
+          </ul>
+        </SubSection>
+
+        <SubSection title="BV Growth Rate">
+          <p className="font-mono text-xs bg-[var(--muted)] px-3 py-2 rounded">
+            BV Growth Rate = (Current BV / Oldest BV) ^ (1 / Years Between) − 1
+          </p>
+          <p className="mt-1">This is the single most important input — it determines how fast book value is projected to grow for the next 10 years. If the rate exceeds 20%/yr, a warning is shown because the stability assumption is less reliable for high-growth companies.</p>
+        </SubSection>
+
+        <SubSection title="Intrinsic Value Formula">
+          <div className="space-y-2">
+            <p><strong>Step 1 — Project BV forward 10 years:</strong></p>
+            <p className="font-mono text-xs bg-[var(--muted)] px-3 py-2 rounded">BV_future = Current BV × (1 + BV Growth Rate) ^ 10</p>
+            <p><strong>Step 2 — Discount BV back to present value:</strong></p>
+            <p className="font-mono text-xs bg-[var(--muted)] px-3 py-2 rounded">PV_of_BV = BV_future / (1 + Treasury Rate) ^ 10</p>
+            <p><strong>Step 3 — Present value of dividend annuity over 10 years:</strong></p>
+            <p className="font-mono text-xs bg-[var(--muted)] px-3 py-2 rounded">PV_of_divs = Annual Dividend × [1 − (1 + Treasury Rate) ^ −10] / Treasury Rate</p>
+            <p><strong>Step 4 — Intrinsic Value:</strong></p>
+            <p className="font-mono text-xs bg-[var(--muted)] px-3 py-2 rounded">IV = PV_of_BV + PV_of_divs</p>
+          </div>
+        </SubSection>
+
+        <SubSection title="Margin of Safety">
+          <p className="font-mono text-xs bg-[var(--muted)] px-3 py-2 rounded">
+            Margin of Safety = (IV − Current Price) / Current Price × 100
+          </p>
+          <ul className="list-disc pl-5 space-y-1 mt-2">
+            <li><strong>≥ 15%</strong> — UNDERVALUED: stock may be trading below estimated IV</li>
+            <li><strong>0–15%</strong> — NEAR IV: modest buffer</li>
+            <li><strong>&lt; 0%</strong> — OVERVALUED: stock is above estimated IV under this model</li>
+          </ul>
+          <p className="mt-1">Buffett typically requires 15–25% margin of safety to account for estimation error in the growth rate. A positive margin does not guarantee a good investment.</p>
+        </SubSection>
+      </Section>
+
+      <Section title="AI Valuation Analysis (Option B)">
+        <p>
+          When Rule 4 is inapplicable, the card offers an AI-powered alternative valuation using a reasoning model (o4-mini).
+          The AI receives analyst consensus, recent news headlines, and excerpts from the most recent 10-K and 10-Q filings
+          via semantic search.
+        </p>
+
+        <SubSection title="Filing Indexing">
+          <p>SEC filings must be indexed into the vector database before the AI can search them. The card handles this automatically:</p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li>If the ticker is already indexed — proceed directly to streaming</li>
+            <li>If not — trigger indexing automatically and show an animated progress indicator (typically 30–90 seconds)</li>
+            <li>Once indexed — stream the AI response token-by-token</li>
+          </ul>
+        </SubSection>
+
+        <SubSection title="Company Classification">
+          <p>The AI classifies the company and tailors its analysis accordingly:</p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>Category A — Mature:</strong> Positive consistent EPS, stable revenue → DCF on earnings, comparable multiples, dividend yield</li>
+            <li><strong>Category B — Growth:</strong> Growing revenue, EPS not yet stable → Revenue multiple, growth-adjusted P/E, path to profitability</li>
+            <li><strong>Category C — Pre-Profitable:</strong> Negative or erratic EPS → Capital runway analysis, burn rate, milestone-based framework</li>
+          </ul>
+          <p className="mt-1">For Category C companies, the AI explicitly addresses how many quarters of runway remain at the current burn rate and what must happen for the company to reach profitability. The output includes bear/base/bull scenario analysis with specific price targets.</p>
+        </SubSection>
+      </Section>
+
+      <Section title="Known Limitations">
+        <ul className="list-disc pl-5 space-y-1">
+          <li><strong>Negative equity</strong> (MCD, SBUX, etc.) — share buybacks can make book equity negative. Rule 4 is inapplicable; use the AI Valuation instead.</li>
+          <li><strong>Financial sector</strong> (banks, insurers) — D/E thresholds don't apply. Rules 3 and 4 may be computed but should be interpreted with caution.</li>
+          <li><strong>Stock splits</strong> — BV/share history may show a discontinuity around a split date, distorting the growth rate calculation.</li>
+          <li><strong>High BV growth (&gt;20%/yr)</strong> — the stability assumption behind the 10-year DCF projection is less reliable. The card flags this.</li>
+          <li><strong>Model risk</strong> — Rule 4's IV is based on historical BV growth and a single discount rate. It is not a prediction of future returns.</li>
+          <li><strong>Data coverage</strong> — EDGAR history typically covers 5–10 years. Newer public companies may show N/A for Rules 3 and 4.</li>
+        </ul>
+      </Section>
+
     </div>
   )
 }
