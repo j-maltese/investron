@@ -367,6 +367,71 @@ export interface TradingPortfolio {
   strategies: TradingStrategy[]
 }
 
+// Buffett 4-Rules Analysis
+export interface BuffettHistoryPoint {
+  period: string   // "YYYY-MM-DD"
+  value: number
+}
+
+export interface BuffettRule1 {
+  debt_to_equity?: number      // yfinance % form (42.3 = 0.423 ratio) — divide by 100 for display
+  current_ratio?: number
+  roe?: number                 // decimal (0.18 = 18%)
+  pb_ratio?: number
+  negative_equity: boolean
+  financial_sector_warning: boolean
+}
+
+export interface BuffettRule2 {
+  sector?: string
+  industry?: string
+  eps_history: BuffettHistoryPoint[]
+  revenue_history: BuffettHistoryPoint[]
+  eps_cagr?: number            // decimal (0.12 = 12%)
+  revenue_cagr?: number        // decimal
+  consecutive_positive_eps_years: number
+  years_of_data: number
+}
+
+export interface BuffettRule3 {
+  bv_history: BuffettHistoryPoint[]
+  de_history: BuffettHistoryPoint[]    // ratio form (0.42x)
+  eps_history: BuffettHistoryPoint[]
+  roe_history: BuffettHistoryPoint[]   // decimal form
+  years_of_data: number
+}
+
+export interface BuffettRule4 {
+  treasury_rate: number         // decimal (0.0452 = 4.52%)
+  annual_dividend: number       // $ per share per year
+  dividend_source: string       // "dividendRate" | "price × yield" | "none"
+  dividend_yield?: number       // decimal (0.014 = 1.4%)
+  current_bv?: number           // $ per share (current, from yfinance)
+  oldest_bv?: number            // $ per share (earliest EDGAR data)
+  years_between?: number
+  bv_growth_rate?: number       // decimal (0.069 = 6.9%)
+  bv_future?: number            // projected BV in 10 years
+  pv_of_bv?: number             // present value of BV_future
+  pv_of_divs?: number           // present value of dividend annuity
+  intrinsic_value?: number
+  margin_of_safety_pct?: number // (IV - price) / price × 100
+  current_price?: number
+  inapplicable: boolean
+  inapplicable_reason?: string
+  high_growth_warning: boolean
+  insufficient_history: boolean
+}
+
+export interface BuffettAnalysis {
+  ticker: string
+  company_name?: string
+  price?: number
+  rule1: BuffettRule1
+  rule2: BuffettRule2
+  rule3: BuffettRule3
+  rule4: BuffettRule4
+}
+
 // AI Chat
 export interface ChatMessage {
   id: string

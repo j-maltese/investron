@@ -8,7 +8,7 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.models.database import init_db
-from app.api import companies, financials, filings, watchlist, valuation, release_notes, screener, ai, indexing, trading
+from app.api import companies, financials, filings, watchlist, valuation, release_notes, screener, ai, indexing, trading, buffett
 from app.auth import routes as auth_routes
 from app.services.scanner import scanner_loop
 
@@ -233,6 +233,7 @@ app.include_router(screener.router, prefix="/api/screener", tags=["screener"])
 app.include_router(ai.router, prefix="/api/ai", tags=["ai"])
 app.include_router(indexing.router, prefix="/api/ai/filings", tags=["filing-indexing"])
 app.include_router(trading.router, prefix="/api/trading", tags=["trading"])
+app.include_router(buffett.router, prefix="/api/buffett", tags=["buffett"])
 
 
 @app.get("/health")

@@ -11,6 +11,7 @@ import { X } from 'lucide-react'
 export const DASHBOARD_CARDS = [
   { key: 'watchlist', label: 'Watchlist' },
   { key: 'screener', label: 'Value Screener' },
+  { key: 'buffett', label: 'Buffett Scorecard' },
 ] as const
 
 export type CardKey = typeof DASHBOARD_CARDS[number]['key']

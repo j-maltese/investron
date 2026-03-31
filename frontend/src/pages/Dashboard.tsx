@@ -5,6 +5,7 @@ import { PageLayout } from '@/components/layout/PageLayout'
 import { useWatchlist, useAlerts, useAddToWatchlist, useRemoveFromWatchlist, useUpdateWatchlistItem, useTickerNotes } from '@/hooks/useWatchlist'
 import { NotePopup } from '@/components/dashboard/NotePopup'
 import { ValueScreener } from '@/components/dashboard/ValueScreener'
+import { BuffettCard } from '@/components/dashboard/BuffettCard'
 import { DashboardSidebar, type CardKey } from '@/components/dashboard/DashboardSidebar'
 import { TickerAutocomplete } from '@/components/search/TickerAutocomplete'
 import { useResizable } from '@/hooks/useResizable'
@@ -48,9 +49,9 @@ export function Dashboard() {
   const [visibleCards, setVisibleCards] = useState<Record<CardKey, boolean>>(() => {
     try {
       const saved = localStorage.getItem('dashboard-visible-cards')
-      return saved ? JSON.parse(saved) : { watchlist: true, screener: true }
+      return saved ? JSON.parse(saved) : { watchlist: true, screener: true, buffett: true }
     } catch {
-      return { watchlist: true, screener: true }
+      return { watchlist: true, screener: true, buffett: true }
     }
   })
 
@@ -65,6 +66,7 @@ export function Dashboard() {
   // Per-card resizable heights
   const watchlistResize = useResizable('watchlist', 420)
   const screenerResize = useResizable('screener', 650)
+  const buffettResize = useResizable('buffett', 700)
 
   // Inline editing state: tracks which cell is being edited (target_price only — notes use popup)
   const [editingCell, setEditingCell] = useState<{ ticker: string; field: 'target_price' } | null>(null)
@@ -350,6 +352,14 @@ export function Dashboard() {
           <ValueScreener
             height={screenerResize.height}
             onResizeMouseDown={screenerResize.handleMouseDown}
+          />
+        )}
+
+        {/* Buffett Scorecard — evaluates a single stock against Buffett's 4 investing rules */}
+        {visibleCards.buffett && (
+          <BuffettCard
+            height={buffettResize.height}
+            onResizeMouseDown={buffettResize.handleMouseDown}
           />
         )}
       </div>

@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     openai_api_key: str = ""          # Empty = AI features disabled (returns 503)
     openai_model: str = "gpt-4.1"
     ai_max_tokens: int = 4096
+    buffett_ai_model: str = "gpt-4.1"  # Model for Buffett Rule 2 durability analysis (env: BUFFETT_AI_MODEL)
+    buffett_valuation_model: str = "o4-mini"  # Model for Buffett Option B AI valuation (env: BUFFETT_VALUATION_MODEL)
+
+    # Serper API -- used for news headline search in Buffett AI valuation prompt.
+    # Empty = news search skipped gracefully (valuation still works without it).
+    serper_api_key: str = ""
 
     # RAG / Filing indexing
     embedding_model: str = "text-embedding-3-small"

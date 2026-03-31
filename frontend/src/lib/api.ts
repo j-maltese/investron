@@ -5,6 +5,7 @@ import type {
   ScenarioModelInput, ScenarioResult, WatchlistItem, Alert, WatchlistView, TickerNote, TickerNotesByTicker, ReleaseNotesResponse,
   ScreenerResultsResponse, ScannerStatus, ChatRequest, FilingIndexStatus,
   TradingStrategy, TradingPosition, TradingOrder, TradingActivityEvent, TradingPortfolio,
+  BuffettAnalysis,
 } from './types'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
@@ -258,6 +259,82 @@ export const api = {
 
   getTradingPortfolio: () =>
     apiFetch<TradingPortfolio>('/api/trading/portfolio'),
+
+  // Buffett 4-Rules Intrinsic Value Calculator
+  getBuffettAnalysis: (ticker: string) =>
+    apiFetch<BuffettAnalysis>(`/api/buffett/${ticker}`),
+
+  /** Stream Option B AI valuation (on-demand, used when Rule 4 is inapplicable).
+   *  Caller must ensure the ticker is indexed before invoking — the backend
+   *  uses RAG-only filing context and will note gaps if not indexed. */
+  streamBuffettValuationAI: async function* (
+    ticker: string,
+    signal?: AbortSignal,
+  ): AsyncGenerator<{ token?: string; done?: boolean; error?: string; status?: string }> {
+    const headers = await getAuthHeaders()
+    const res = await fetch(`${API_BASE}/api/buffett/${ticker}/valuation-ai`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      signal,
+    })
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      throw new Error(err.detail || `API error: ${res.status}`)
+    }
+
+    const reader = res.body!.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          yield JSON.parse(line.slice(6))
+        }
+      }
+    }
+  },
+
+  /** Stream Rule 2 AI durability analysis (on-demand, expensive) */
+  streamBuffettAI: async function* (
+    ticker: string,
+    signal?: AbortSignal,
+  ): AsyncGenerator<{ token?: string; done?: boolean; error?: string }> {
+    const headers = await getAuthHeaders()
+    const res = await fetch(`${API_BASE}/api/buffett/${ticker}/ai-analysis`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      signal,
+    })
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      throw new Error(err.detail || `API error: ${res.status}`)
+    }
+
+    const reader = res.body!.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          yield JSON.parse(line.slice(6))
+        }
+      }
+    }
+  },
 
   // AI Chat — raw SSE stream (not apiFetch, which expects JSON)
   streamAIChat: async function* (

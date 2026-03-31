@@ -97,10 +97,21 @@ def _get_stock_info_sync(ticker: str) -> dict | None:
         "free_cash_flow": info.get("freeCashflow"),
         "total_revenue": info.get("totalRevenue"),
         "dividend_yield": info.get("dividendYield"),
+        # dividendRate = annual cash dividend per share (dollar amount).
+        # dividendYield is the %, but the Buffett IV formula needs the raw $ amount.
+        "dividend_rate": info.get("dividendRate"),
         "beta": info.get("beta"),
         "book_value": info.get("bookValue"),
         "fifty_two_week_high": info.get("fiftyTwoWeekHigh"),
         "fifty_two_week_low": info.get("fiftyTwoWeekLow"),
+        # Analyst consensus fields — used by Buffett valuation AI prompt.
+        # recommendationMean: 1.0=Strong Buy, 2.0=Buy, 3.0=Hold, 4.0=Sell, 5.0=Strong Sell
+        "target_mean_price": info.get("targetMeanPrice"),
+        "target_high_price": info.get("targetHighPrice"),
+        "target_low_price": info.get("targetLowPrice"),
+        "recommendation_mean": info.get("recommendationMean"),
+        "recommendation_key": info.get("recommendationKey"),   # e.g. "buy", "hold", "sell"
+        "number_of_analyst_opinions": info.get("numberOfAnalystOpinions"),
     }
 
     # yfinance occasionally returns the string 'Infinity'/'-Infinity' instead of
