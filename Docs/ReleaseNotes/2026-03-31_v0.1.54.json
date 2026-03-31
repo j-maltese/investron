@@ -1,0 +1,23 @@
+{
+  "version": "0.1.54",
+  "date": "2026-03-31",
+  "title": "v0.1.54",
+  "summary": "Release 0.1.54 includes 1 enhancement, 2 bug fixes.",
+  "sections": [
+    {
+      "type": "bug_fix",
+      "label": "Bug Fixes",
+      "items": [
+        "Fix Recharts Tooltip type errors in BuffettCard sparklines",
+        "Fix Buffett card UI improvements (build error caused by file corruption)"
+      ]
+    },
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "UI Fixes to the Buffett card"
+      ]
+    }
+  ]
+}
