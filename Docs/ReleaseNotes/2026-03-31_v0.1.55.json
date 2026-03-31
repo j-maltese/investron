@@ -1,0 +1,15 @@
+{
+  "version": "0.1.55",
+  "date": "2026-03-31",
+  "title": "v0.1.55",
+  "summary": "Release 0.1.55 includes 1 enhancement.",
+  "sections": [
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Creates Buffett Scorecard README and places it on the Docs page"
+      ]
+    }
+  ]
+}
