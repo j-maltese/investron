@@ -14,7 +14,7 @@
 
 import { useState, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { LineChart, Line, Tooltip, ResponsiveContainer } from 'recharts'
+import { LineChart, Line, Tooltip, ResponsiveContainer, XAxis } from 'recharts'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
@@ -142,7 +142,9 @@ function MetricTooltip({ text }: { text: string }) {
     const el = triggerRef.current
     if (!el) return
     const rect = el.getBoundingClientRect()
-    setPos({ top: rect.top - 8, left: rect.left + rect.width / 2 })
+    const rawLeft = rect.left + rect.width / 2
+    const left = Math.max(148, Math.min(rawLeft, window.innerWidth - 148))
+    setPos({ top: rect.top - 8, left })
   }, [])
 
   const hide = useCallback(() => setPos(null), [])
@@ -223,29 +225,36 @@ function Sparkline({
   data,
   color,
   height = 44,
-  showDots = false,
+  formatter,
 }: {
-  data: { value: number }[]
+  data: { value: number; label?: string }[]
   color: string
   height?: number
-  showDots?: boolean
+  formatter?: (v: number) => string
 }) {
   if (!data.length) return <div style={{ height }} className="flex items-center justify-center text-[var(--muted-foreground)] text-xs">no data</div>
 
+  const hasLabels = data.some(d => d.label != null)
+  const totalHeight = hasLabels ? height + 16 : height
   return (
-    <div style={{ height }}>
+    <div style={{ height: totalHeight }}>
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 2, bottom: 2, left: 2, right: 2 }}>
+        <LineChart data={data} margin={{ top: 2, bottom: 0, left: 0, right: 4 }}>
+          {hasLabels && (
+            <XAxis dataKey="label" tick={{ fontSize: 9, fill: "#64748b" }} tickLine={false} axisLine={false} interval="preserveStartEnd" height={14} />
+          )}
           <Tooltip
-            formatter={(v: number | undefined) => v != null ? v.toFixed(2) : '—'}
+            formatter={(v: number | undefined) => [v != null && formatter ? formatter(v) : (v ?? 0).toFixed(2), '']}
+            labelFormatter={(label: unknown) => label != null ? String(label) : ''}
             contentStyle={{ fontSize: 10, padding: '2px 6px', background: 'var(--card)', border: '1px solid var(--border)' }}
+            itemStyle={{ color }}
           />
           <Line
             type="monotone"
             dataKey="value"
             stroke={color}
             strokeWidth={1.5}
-            dot={showDots ? { r: 2, fill: color } : false}
+            dot={false}
             activeDot={{ r: 3 }}
           />
         </LineChart>
@@ -564,7 +573,9 @@ export function BuffettCard({ height, onResizeMouseDown }: BuffettCardProps) {
         ) : data && rule1 && rule2 && rule3 && rule4 ? (
           <div className="py-4 space-y-5">
 
-            {/* ── Rule 1: Vigilant Leadership ───────────────────────────── */}
+            {/* ── Rules 1 & 4: side-by-side ─ */}
+            <div className="grid grid-cols-2 gap-5 items-start">
+            {/* ── Rule 1 ─ */}
             <div className="space-y-1.5">
               <RuleHeader
                 number={1}
@@ -606,7 +617,9 @@ export function BuffettCard({ height, onResizeMouseDown }: BuffettCardProps) {
                 value={rule1.pb_ratio != null ? fmtRatio(rule1.pb_ratio) : 'N/A'}
                 subtext="context only"
               />
-            </div>
+            </div>{/* end Rule 1 */}
+            <Rule4Section rule4={rule4} />
+            </div>{/* end grid */}
 
             {/* ── Rule 2: Long-Term Prospects ───────────────────────────── */}
             <div className="space-y-2">
@@ -745,7 +758,8 @@ export function BuffettCard({ height, onResizeMouseDown }: BuffettCardProps) {
                     <TrendCell series={rule3.bv_history} goodDir="up" formatVal={v => `$${v.toFixed(0)}`} />
                   </div>
                   <Sparkline
-                    data={rule3.bv_history}
+                    data={rule3.bv_history.map(e => ({ value: e.value, label: yr(e.period) }))}
+                    formatter={v => '$' + v.toFixed(2)}
                     color={trendDir(rule3.bv_history) === 'up' ? '#22c55e' : '#64748b'}
                     height={40}
                   />
@@ -761,7 +775,8 @@ export function BuffettCard({ height, onResizeMouseDown }: BuffettCardProps) {
                     <TrendCell series={rule3.de_history} goodDir="down" formatVal={v => `${v.toFixed(2)}x`} />
                   </div>
                   <Sparkline
-                    data={rule3.de_history}
+                    data={rule3.de_history.map(e => ({ value: e.value, label: yr(e.period) }))}
+                    formatter={v => v.toFixed(2) + 'x'}
                     color={trendDir(rule3.de_history) === 'down' || trendDir(rule3.de_history) === 'flat' ? '#22c55e' : '#ef4444'}
                     height={40}
                   />
@@ -777,7 +792,8 @@ export function BuffettCard({ height, onResizeMouseDown }: BuffettCardProps) {
                     <TrendCell series={rule3.eps_history} goodDir="up" formatVal={v => `$${v.toFixed(2)}`} />
                   </div>
                   <Sparkline
-                    data={rule3.eps_history}
+                    data={rule3.eps_history.map(e => ({ value: e.value, label: yr(e.period) }))}
+                    formatter={v => '$' + v.toFixed(2)}
                     color={trendDir(rule3.eps_history) === 'up' ? '#22c55e' : '#64748b'}
                     height={40}
                   />
@@ -793,7 +809,8 @@ export function BuffettCard({ height, onResizeMouseDown }: BuffettCardProps) {
                     <TrendCell series={rule3.roe_history} goodDir="either" formatVal={v => `${(v * 100).toFixed(0)}%`} />
                   </div>
                   <Sparkline
-                    data={rule3.roe_history}
+                    data={rule3.roe_history.map(e => ({ value: e.value, label: yr(e.period) }))}
+                    formatter={v => (v * 100).toFixed(1) + '%'}
                     color={trendDir(rule3.roe_history) !== 'down' ? '#22c55e' : '#64748b'}
                     height={40}
                   />
@@ -801,8 +818,6 @@ export function BuffettCard({ height, onResizeMouseDown }: BuffettCardProps) {
               </div>
             </div>
 
-            {/* ── Rule 4: Intrinsic Value ───────────────────────────────── */}
-            <Rule4Section rule4={rule4} />
 
             {/* ── Option B: AI Valuation (only shown when Rule 4 is inapplicable) ── */}
             {rule4.inapplicable && (
