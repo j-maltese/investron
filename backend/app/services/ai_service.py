@@ -23,12 +23,19 @@ ToolExecutor = Callable[[str, dict], Awaitable[str]]
 async def stream_chat_response(
     system_prompt: str,
     messages: list[dict],
+    model_override: str | None = None,
+    temperature: float | None = 0.7,
 ) -> AsyncGenerator[str, None]:
     """Stream tokens from OpenAI, yielding each content delta.
 
     Args:
         system_prompt: The full system prompt including ticker data context.
         messages: Conversation history in OpenAI format [{role, content}, ...].
+        model_override: Optional model ID to use instead of settings.openai_model.
+                        Used by Buffett AI analysis to use a reasoning model.
+        temperature: Sampling temperature. Pass None to omit the parameter entirely,
+                     which is required for OpenAI reasoning models (o1, o3, o4-mini)
+                     that do not accept a temperature argument.
 
     Yields:
         Individual text tokens as they arrive from the API.
@@ -41,13 +48,18 @@ async def stream_chat_response(
         *messages,
     ]
 
-    stream = await client.chat.completions.create(
-        model=settings.openai_model,
-        messages=full_messages,
-        max_tokens=settings.ai_max_tokens,
-        temperature=0.7,
-        stream=True,
-    )
+    # Reasoning models (o1, o3, o4-*) do not accept the temperature parameter —
+    # OpenAI returns a 400 if it is present. Callers pass temperature=None to omit it.
+    create_kwargs: dict = {
+        "model": model_override or settings.openai_model,
+        "messages": full_messages,
+        "max_tokens": settings.ai_max_tokens,
+        "stream": True,
+    }
+    if temperature is not None:
+        create_kwargs["temperature"] = temperature
+
+    stream = await client.chat.completions.create(**create_kwargs)
 
     async for chunk in stream:
         delta = chunk.choices[0].delta
