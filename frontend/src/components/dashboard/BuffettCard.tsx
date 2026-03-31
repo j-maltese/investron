@@ -244,8 +244,8 @@ function Sparkline({
             <XAxis dataKey="label" tick={{ fontSize: 9, fill: "#64748b" }} tickLine={false} axisLine={false} interval="preserveStartEnd" height={14} />
           )}
           <Tooltip
-            formatter={(v: number) => [formatter ? formatter(v) : v.toFixed(2), '']}
-            labelFormatter={(label: string) => label ? String(label) : ''}
+            formatter={(v: number | undefined) => [v != null && formatter ? formatter(v) : (v ?? 0).toFixed(2), '']}
+            labelFormatter={(label: unknown) => label != null ? String(label) : ''}
             contentStyle={{ fontSize: 10, padding: '2px 6px', background: 'var(--card)', border: '1px solid var(--border)' }}
             itemStyle={{ color }}
           />
