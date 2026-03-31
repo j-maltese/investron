@@ -474,6 +474,11 @@ export function BuffettCard({ height, onResizeMouseDown }: BuffettCardProps) {
   const [ticker, setTicker] = useState<string | null>(() => {
     return localStorage.getItem('buffett-ticker') || null
   })
+  // Separate input state so the autocomplete field responds to typing
+  // (ticker = last confirmed selection; inputValue = live text in the input box)
+  const [inputValue, setInputValue] = useState<string>(() => {
+    return localStorage.getItem('buffett-ticker') || ''
+  })
 
   const { data, isLoading, error, refetch } = useBuffettAnalysis(ticker)
   const aiAnalysis = useBuffettAI(ticker)
@@ -489,6 +494,7 @@ export function BuffettCard({ height, onResizeMouseDown }: BuffettCardProps) {
     const upper = t.toUpperCase().trim()
     if (!upper) return
     setTicker(upper)
+    setInputValue(upper)
     localStorage.setItem('buffett-ticker', upper)
     aiResetRef.current()        // clear Rule 2 AI result when ticker changes
     valuationResetRef.current() // clear Option B valuation result when ticker changes
@@ -525,8 +531,8 @@ export function BuffettCard({ height, onResizeMouseDown }: BuffettCardProps) {
           )}
           <div className="w-52">
             <TickerAutocomplete
-              value={ticker || ''}
-              onChange={() => {}}
+              value={inputValue}
+              onChange={setInputValue}
               onSelect={(r) => selectTicker(r.ticker)}
               placeholder="Select a ticker..."
               showIcon={false}
