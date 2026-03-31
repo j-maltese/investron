@@ -344,12 +344,32 @@ async def get_buffett_analysis(ticker: str, db: AsyncSession) -> dict:
         "insufficient_history": False,
     }
 
+    # Near-zero equity: book_value is technically positive but so small relative to price
+    # that the DCF produces a meaningless result (e.g. HALO: BV=$0.41, price=$63, P/B=153x).
+    # Treat the same as negative equity — Rule 4 requires a meaningful book value base.
+    near_zero_equity = (
+        not negative_equity
+        and book_value is not None
+        and book_value > 0
+        and price is not None
+        and price > 0
+        and (price / book_value) > 50  # P/B > 50x means BV is less than 2% of market price
+    )
+
     if negative_equity:
         rule4["inapplicable"] = True
         rule4["inapplicable_reason"] = (
             "Negative shareholders' equity — book value DCF is not applicable. "
             "Common in companies with aggressive buyback programs (e.g. MCD, SBUX) "
             "where cumulative repurchases exceed retained earnings."
+        )
+    elif near_zero_equity:
+        rule4["inapplicable"] = True
+        rule4["inapplicable_reason"] = (
+            f"Near-zero book value (${book_value:.2f}/share, P/B ≈ {price/book_value:.0f}x) — "
+            "book value DCF produces a result too small to be meaningful. "
+            "This typically occurs in companies that have returned equity to shareholders "
+            "through buybacks without carrying negative equity on the balance sheet."
         )
     elif not book_value or book_value <= 0:
         rule4["inapplicable"] = True
@@ -405,6 +425,103 @@ async def get_buffett_analysis(ticker: str, db: AsyncSession) -> dict:
                 logger.warning("IV calculation failed for %s: %s", ticker, e)
 
     # -----------------------------------------------------------------------
+    # Rule 4 Alternative — Earnings Power Analysis
+    #
+    # Shown when Rule 4 (BV-DCF) is inapplicable due to negative or near-zero
+    # equity. Instead of anchoring value to book value, we ask:
+    #   1. Does the stock's earnings yield beat the risk-free (Treasury) rate?
+    #   2. Does free cash flow yield beat the risk-free rate?
+    #   3. Can the company comfortably service its debt? (Net Debt/EBITDA, Interest Coverage)
+    #   4. Is EPS growing? (reuse from Rule 2)
+    #
+    # Buffett's core earnings yield test: E/P > Treasury rate → stock "earns"
+    # more than a safe bond, giving a starting case for ownership.
+    # -----------------------------------------------------------------------
+    rule4_alt: dict | None = None
+
+    if rule4["inapplicable"]:
+        total_debt = metrics.get("total_debt")         # absolute $ from yfinance
+        total_cash = metrics.get("total_cash")         # absolute $ from yfinance
+        ebitda = metrics.get("ebitda")                 # absolute $ from yfinance
+        pe_ratio = metrics.get("pe_ratio")             # trailing P/E
+        forward_pe = metrics.get("forward_pe")         # forward P/E
+        free_cash_flow = metrics.get("free_cash_flow") # total FCF $ from yfinance
+        market_cap = metrics.get("market_cap")         # total market cap $
+        eps_val = metrics.get("eps")                   # trailing EPS per share
+
+        # Earnings yield = EPS / Price — the inverse of P/E, expressed as %.
+        # This is Buffett's core comparison: does the company earn more per
+        # dollar than a risk-free Treasury bond?
+        earnings_yield: float | None = None
+        if eps_val and price and price > 0:
+            earnings_yield = round(eps_val / price * 100, 2)
+        elif pe_ratio and pe_ratio > 0:
+            earnings_yield = round(1 / pe_ratio * 100, 2)
+
+        # FCF yield = Free Cash Flow / Market Cap.
+        # Cash flow is harder to manipulate than earnings — often a more
+        # honest picture of what the business actually generates per dollar invested.
+        fcf_yield: float | None = None
+        if free_cash_flow and market_cap and market_cap > 0:
+            fcf_yield = round(free_cash_flow / market_cap * 100, 2)
+
+        # Net Debt = Total Debt − Cash & Equivalents.
+        # Negative net debt = net cash position (company has more cash than debt).
+        net_debt: float | None = None
+        if total_debt is not None and total_cash is not None:
+            net_debt = total_debt - total_cash
+
+        # Net Debt / EBITDA: how many years of earnings before tax/depreciation
+        # would it take to pay off all net debt? Under 3x = healthy, 3-5x = stretched,
+        # over 5x = concerning for a company already carrying low/negative equity.
+        net_debt_to_ebitda: float | None = None
+        if net_debt is not None and ebitda and ebitda > 0:
+            net_debt_to_ebitda = round(net_debt / ebitda, 2)
+
+        # Interest Coverage = Operating Income / Interest Expense from most recent
+        # annual EDGAR filing. Shows whether earnings comfortably cover debt service.
+        # Pull the most recent annual values from the already-fetched EDGAR data.
+        interest_coverage: float | None = None
+        op_income_series = _extract_series(income_statements, "operating_income")
+        int_exp_series = _extract_series(income_statements, "interest_expense")
+        if op_income_series and int_exp_series:
+            # Most recent annual values — series is sorted ascending by period
+            latest_op_income = op_income_series[-1]["value"]
+            latest_int_exp = int_exp_series[-1]["value"]
+            if latest_int_exp is not None and latest_int_exp > 0 and latest_op_income is not None:
+                interest_coverage = round(latest_op_income / latest_int_exp, 2)
+
+        # Treasury rate is already fetched for Rule 4 — reuse it as the hurdle rate
+        # for the "beats treasury" comparisons below.
+        treasury_rate_pct = round(treasury_rate * 100, 2)  # e.g. 4.33 for 4.33%
+
+        rule4_alt = {
+            # Core earning power vs risk-free hurdle
+            "earnings_yield": earnings_yield,       # % (e.g. 5.2)
+            "fcf_yield": fcf_yield,                 # % (e.g. 4.8)
+            "treasury_rate": treasury_rate,         # decimal, same as rule4
+            "treasury_rate_pct": treasury_rate_pct, # % form for display
+            "earnings_beats_treasury": (
+                earnings_yield is not None and earnings_yield > treasury_rate_pct
+            ),
+            "fcf_beats_treasury": (
+                fcf_yield is not None and fcf_yield > treasury_rate_pct
+            ),
+            # Valuation multiples
+            "pe_ratio": pe_ratio,
+            "forward_pe": forward_pe,
+            # Growth (reuse from Rule 2 — already computed above)
+            "eps_cagr": rule2["eps_cagr"],
+            "revenue_cagr": rule2["revenue_cagr"],
+            "consecutive_positive_eps_years": rule2["consecutive_positive_eps_years"],
+            # Debt health
+            "net_debt": net_debt,                               # absolute $
+            "ebitda": ebitda,                                   # absolute $
+            "net_debt_to_ebitda": net_debt_to_ebitda,           # ratio (e.g. 2.1)
+            "interest_coverage": interest_coverage,             # ratio (e.g. 8.4)
+        }
+
+    # -----------------------------------------------------------------------
     # Assemble final result and cache it
     # -----------------------------------------------------------------------
     result = {
@@ -415,6 +532,7 @@ async def get_buffett_analysis(ticker: str, db: AsyncSession) -> dict:
         "rule2": rule2,
         "rule3": rule3,
         "rule4": rule4,
+        "rule4_alt": rule4_alt,  # None when Rule 4 is applicable; populated when inapplicable
     }
 
     await set_cached_data(

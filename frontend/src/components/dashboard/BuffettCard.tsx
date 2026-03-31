@@ -24,7 +24,7 @@ import {
 import { useBuffettAnalysis, useBuffettAI, useBuffettValuationAI } from '@/hooks/useBuffett'
 import { TickerAutocomplete } from '@/components/search/TickerAutocomplete'
 import { useResizable } from '@/hooks/useResizable'
-import type { BuffettHistoryPoint, BuffettRule4 } from '@/lib/types'
+import type { BuffettHistoryPoint, BuffettRule4, BuffettRule4Alt } from '@/lib/types'
 
 // ============================================================================
 // Formatting helpers
@@ -311,6 +311,157 @@ function computeIV(
 }
 
 // ============================================================================
+// ============================================================================
+// Rule 4 Alternative — Earnings Power Analysis
+// Shown when Rule 4 BV-DCF is inapplicable (negative/near-zero equity).
+// ============================================================================
+
+function earningsYieldStatus(ey?: number | null, tPct?: number): PassFail {
+  // Buffett's core test: earnings yield must beat the risk-free Treasury rate
+  if (ey == null || tPct == null) return 'na'
+  if (ey >= tPct * 1.5) return 'pass'     // beats treasury by 50%+ → clear pass
+  if (ey >= tPct) return 'warn'           // beats treasury but only barely
+  return 'fail'
+}
+
+function fcfYieldStatus(fy?: number | null, tPct?: number): PassFail {
+  if (fy == null || tPct == null) return 'na'
+  if (fy >= tPct * 1.5) return 'pass'
+  if (fy >= tPct) return 'warn'
+  return 'fail'
+}
+
+function netDebtEbitdaStatus(v?: number | null): PassFail {
+  // Net cash (negative net debt) or low leverage = healthy
+  if (v == null) return 'na'
+  if (v < 0) return 'pass'    // net cash position — no debt concern
+  if (v < 3) return 'pass'
+  if (v < 5) return 'warn'
+  return 'fail'
+}
+
+function interestCoverageStatus(v?: number | null): PassFail {
+  if (v == null) return 'na'
+  if (v >= 5) return 'pass'
+  if (v >= 2) return 'warn'
+  return 'fail'
+}
+
+function epsCagrAltStatus(v?: number | null): PassFail {
+  if (v == null) return 'na'
+  if (v > 0.10) return 'pass'
+  if (v > 0) return 'warn'
+  return 'fail'
+}
+
+function rule4AltOverall(alt: BuffettRule4Alt): PassFail {
+  const statuses = [
+    earningsYieldStatus(alt.earnings_yield, alt.treasury_rate_pct),
+    fcfYieldStatus(alt.fcf_yield, alt.treasury_rate_pct),
+    netDebtEbitdaStatus(alt.net_debt_to_ebitda),
+    interestCoverageStatus(alt.interest_coverage),
+  ].filter(s => s !== 'na')
+  if (statuses.length === 0) return 'na'
+  if (statuses.every(s => s === 'pass')) return 'pass'
+  if (statuses.some(s => s === 'fail')) return 'fail'
+  return 'warn'
+}
+
+function fmtLargeUSD(v?: number | null): string {
+  if (v == null) return 'N/A'
+  const abs = Math.abs(v)
+  const sign = v < 0 ? '-' : ''
+  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(1)}B`
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(0)}M`
+  return `${sign}$${abs.toFixed(0)}`
+}
+
+function Rule4AltSection({ rule4, rule4alt }: { rule4: BuffettRule4; rule4alt: BuffettRule4Alt }) {
+  const tPct = rule4alt.treasury_rate_pct
+
+  return (
+    <div className="space-y-1.5">
+      <RuleHeader number={4} title="Earnings Power" status={rule4AltOverall(rule4alt)} />
+
+      {/* Explain why we're showing this instead of standard Rule 4 */}
+      <div className="flex items-start gap-2 p-2 rounded bg-amber-500/10 text-xs text-amber-400">
+        <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+        <span>
+          BV-DCF inapplicable — {rule4.inapplicable_reason?.split('—')[0]?.trim() ?? 'book value not meaningful'}.
+          Showing earnings power analysis instead.
+        </span>
+      </div>
+
+      {/* Earnings Yield vs Treasury — Buffett's primary comparison */}
+      <MetricRow
+        label="Earnings Yield"
+        tooltip={`EPS ÷ Current Price × 100. Buffett's core comparison: does the stock earn more per dollar than a risk-free Treasury bond? If earnings yield > Treasury rate (${tPct.toFixed(2)}%), the stock is a better starting candidate than holding bonds. Source: yfinance trailingEps / price.`}
+        value={rule4alt.earnings_yield != null ? `${rule4alt.earnings_yield.toFixed(1)}%` : 'N/A'}
+        subtext={`hurdle: ${tPct.toFixed(2)}% (10Y Treasury)`}
+        status={earningsYieldStatus(rule4alt.earnings_yield, tPct)}
+      />
+
+      {/* FCF Yield — cash flow version of the same test */}
+      <MetricRow
+        label="FCF Yield"
+        tooltip={`Free Cash Flow ÷ Market Cap × 100. Cash flow is harder to manipulate than earnings — a more honest picture of what the business generates per dollar invested. Compare to the Treasury rate (${tPct.toFixed(2)}%) as a hurdle. Source: yfinance freeCashflow / marketCap.`}
+        value={rule4alt.fcf_yield != null ? `${rule4alt.fcf_yield.toFixed(1)}%` : 'N/A'}
+        subtext={`hurdle: ${tPct.toFixed(2)}% (10Y Treasury)`}
+        status={fcfYieldStatus(rule4alt.fcf_yield, tPct)}
+      />
+
+      {/* P/E multiples — valuation context */}
+      <MetricRow
+        label="P/E (trailing / fwd)"
+        tooltip="Trailing P/E = Price ÷ Trailing EPS. Forward P/E = Price ÷ Estimated Next-Year EPS. Context for how expensive the stock is relative to its earnings. Lower P/E = cheaper per dollar earned. Forward P/E below trailing suggests analysts expect earnings growth. Source: yfinance trailingPE / forwardPE."
+        value={
+          rule4alt.pe_ratio != null || rule4alt.forward_pe != null
+            ? `${rule4alt.pe_ratio != null ? rule4alt.pe_ratio.toFixed(1) + 'x' : 'N/A'} / ${rule4alt.forward_pe != null ? rule4alt.forward_pe.toFixed(1) + 'x' : 'N/A'}`
+            : 'N/A'
+        }
+        subtext="trailing / forward"
+      />
+
+      {/* EPS CAGR — growth quality */}
+      <MetricRow
+        label="EPS CAGR"
+        tooltip="Compound Annual Growth Rate of EPS over the available history. For companies where book value is not a reliable anchor, consistent earnings growth is the next best signal of durable value. Source: EDGAR annual income statements."
+        value={rule4alt.eps_cagr != null ? `${rule4alt.eps_cagr >= 0 ? '+' : ''}${fmtPct(rule4alt.eps_cagr)}` : 'N/A'}
+        subtext={rule4alt.consecutive_positive_eps_years > 0 ? `${rule4alt.consecutive_positive_eps_years} consecutive positive yrs` : undefined}
+        status={epsCagrAltStatus(rule4alt.eps_cagr)}
+      />
+
+      <div className="border-t border-[var(--border)] pt-2 mt-1 space-y-1.5">
+        <p className="text-[10px] text-[var(--muted-foreground)] font-medium uppercase tracking-wider">Debt Health</p>
+
+        {/* Net Debt / EBITDA */}
+        <MetricRow
+          label="Net Debt / EBITDA"
+          tooltip="(Total Debt − Cash) ÷ EBITDA. How many years of pre-tax earnings would it take to pay off net debt. Under 3x = healthy. Negative = net cash position (more cash than debt). For companies with low/negative equity from buybacks, this replaces D/E as the leverage check. Source: yfinance totalDebt, totalCash, ebitda."
+          value={
+            rule4alt.net_debt_to_ebitda != null
+              ? `${rule4alt.net_debt_to_ebitda.toFixed(1)}x`
+              : rule4alt.net_debt != null && rule4alt.net_debt < 0
+              ? 'Net cash'
+              : 'N/A'
+          }
+          subtext={rule4alt.net_debt != null ? `net debt: ${fmtLargeUSD(rule4alt.net_debt)}` : undefined}
+          status={netDebtEbitdaStatus(rule4alt.net_debt_to_ebitda)}
+        />
+
+        {/* Interest Coverage */}
+        <MetricRow
+          label="Interest Coverage"
+          tooltip="Operating Income ÷ Interest Expense (most recent annual, from EDGAR). How many times over the company can cover its interest payments from operating earnings. Above 5x = strong. Below 2x = potentially concerning if earnings dip. Source: EDGAR annual income statements."
+          value={rule4alt.interest_coverage != null ? `${rule4alt.interest_coverage.toFixed(1)}x` : 'N/A'}
+          subtext="EBIT ÷ interest expense"
+          status={interestCoverageStatus(rule4alt.interest_coverage)}
+        />
+      </div>
+    </div>
+  )
+}
+
 // Rule 4 section — IV calculation with live treasury rate override
 // ============================================================================
 
@@ -513,6 +664,7 @@ export function BuffettCard({ height, onResizeMouseDown }: BuffettCardProps) {
   const rule2 = data?.rule2
   const rule3 = data?.rule3
   const rule4 = data?.rule4
+  const rule4alt = data?.rule4_alt
 
   // Format year from YYYY-MM-DD period string
   const yr = (period: string) => period.slice(0, 4)
@@ -618,7 +770,10 @@ export function BuffettCard({ height, onResizeMouseDown }: BuffettCardProps) {
                 subtext="context only"
               />
             </div>{/* end Rule 1 */}
-            <Rule4Section rule4={rule4} />
+            {rule4alt
+              ? <Rule4AltSection rule4={rule4} rule4alt={rule4alt} />
+              : <Rule4Section rule4={rule4} />
+            }
             </div>{/* end grid */}
 
             {/* ── Rule 2: Long-Term Prospects ───────────────────────────── */}

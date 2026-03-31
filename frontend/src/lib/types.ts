@@ -422,6 +422,30 @@ export interface BuffettRule4 {
   insufficient_history: boolean
 }
 
+// Shown in place of Rule 4 when BV-DCF is inapplicable (negative or near-zero equity).
+// Anchors value to earnings/cash flow instead of book value.
+export interface BuffettRule4Alt {
+  // Earnings power vs Treasury hurdle
+  earnings_yield?: number        // EPS / Price × 100 (e.g. 5.2 = 5.2%)
+  fcf_yield?: number             // FCF / Market Cap × 100 (e.g. 4.8 = 4.8%)
+  treasury_rate: number          // decimal (0.0433 = 4.33%)
+  treasury_rate_pct: number      // % form for display (e.g. 4.33)
+  earnings_beats_treasury: boolean
+  fcf_beats_treasury: boolean
+  // Valuation multiples
+  pe_ratio?: number
+  forward_pe?: number
+  // Growth (same source as Rule 2)
+  eps_cagr?: number              // decimal (0.12 = 12%)
+  revenue_cagr?: number
+  consecutive_positive_eps_years: number
+  // Debt health
+  net_debt?: number              // total_debt − total_cash ($)
+  ebitda?: number                // absolute $ from yfinance
+  net_debt_to_ebitda?: number    // ratio (e.g. 2.1)
+  interest_coverage?: number     // operating_income / interest_expense (most recent annual)
+}
+
 export interface BuffettAnalysis {
   ticker: string
   company_name?: string
@@ -430,6 +454,7 @@ export interface BuffettAnalysis {
   rule2: BuffettRule2
   rule3: BuffettRule3
   rule4: BuffettRule4
+  rule4_alt?: BuffettRule4Alt    // populated only when rule4.inapplicable === true
 }
 
 // AI Chat

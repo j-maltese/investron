@@ -676,8 +676,16 @@ function BuffettGuide() {
       <Section title="Rule 4 — Intrinsic Value">
         <p>
           Rule 4 computes an intrinsic value (IV) using the <strong>BuffettsBooks.com Book Value DCF methodology</strong> and
-          compares it to the current market price. Rule 4 is inapplicable when book equity is negative or when fewer than 3
-          years of EDGAR history are available — in those cases, the AI Valuation is offered instead.
+          compares it to the current market price. Rule 4 is inapplicable when:
+        </p>
+        <ul className="list-disc pl-5 space-y-1 mt-1">
+          <li><strong>Negative equity</strong> — the BV DCF formula requires positive book value (common in heavy buyback programs like MCD, SBUX)</li>
+          <li><strong>Near-zero equity</strong> — when P/B &gt; 50×, book value is less than 2% of the market price and the DCF produces an economically meaningless result (e.g. HALO: BV = $0.41/share, price = $63 → IV ≈ $0.94). The company's real value comes from future earnings, not assets.</li>
+          <li><strong>Insufficient history</strong> — fewer than 3 years of EDGAR balance sheet data</li>
+        </ul>
+        <p className="mt-1">
+          When Rule 4 is inapplicable, the card automatically shows an <strong>Earnings Power Analysis</strong> instead (see below).
+          An <strong>AI Valuation</strong> is also available on demand.
         </p>
 
         <SubSection title="Inputs">
@@ -722,9 +730,40 @@ function BuffettGuide() {
         </SubSection>
       </Section>
 
+      <Section title="Earnings Power Analysis (Rule 4 Alternative)">
+        <p>
+          When Rule 4's BV-DCF is inapplicable, the right panel automatically switches to an <strong>Earnings Power Analysis</strong>.
+          The question shifts from "what are the assets worth?" to "does the stock earn more per dollar than a risk-free Treasury bond,
+          and can the company support its debt?"
+        </p>
+
+        <SubSection title="Earnings Yield vs Treasury">
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>Earnings Yield</strong> — EPS ÷ Price × 100. Buffett's core bond-vs-stock comparison: if earnings yield &gt; Treasury rate, the stock earns more per dollar than a risk-free bond. PASS if ≥ 1.5× Treasury; BORDERLINE if ≥ Treasury; FAIL if below.</li>
+            <li><strong>FCF Yield</strong> — Free Cash Flow ÷ Market Cap × 100. Cash flow is harder to manipulate than earnings — a more honest picture of what the business actually generates. Same pass/fail thresholds as Earnings Yield.</li>
+            <li>Both metrics use the same live 10Y Treasury rate as Rule 4's discount rate.</li>
+          </ul>
+        </SubSection>
+
+        <SubSection title="Valuation & Growth">
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>P/E (trailing / forward)</strong> — context only, no pass/fail. Forward P/E below trailing suggests analysts expect earnings growth.</li>
+            <li><strong>EPS CAGR</strong> — for companies where BV is not a reliable anchor, consistent earnings growth is the next best signal of durable value. PASS if &gt;10%/yr. Consecutive positive EPS years also displayed.</li>
+          </ul>
+        </SubSection>
+
+        <SubSection title="Debt Health">
+          <p>When D/E is broken by near-zero or negative equity, these metrics replace it:</p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>Net Debt / EBITDA</strong> — (Total Debt − Cash) ÷ EBITDA. How many years of operating earnings to retire net debt. PASS if &lt;3× (or net cash); BORDERLINE 3–5×; FAIL &gt;5×. A net cash position (more cash than debt) always passes.</li>
+            <li><strong>Interest Coverage</strong> — Operating Income ÷ Interest Expense (most recent EDGAR annual). Can the company comfortably service its debt? PASS if ≥5×; BORDERLINE 2–5×; FAIL &lt;2×. Source: EDGAR annual income statements.</li>
+          </ul>
+        </SubSection>
+      </Section>
+
       <Section title="AI Valuation Analysis (Option B)">
         <p>
-          When Rule 4 is inapplicable, the card offers an AI-powered alternative valuation using a reasoning model (o4-mini).
+          When Rule 4 is inapplicable, the card also offers an AI-powered alternative valuation using a reasoning model (o4-mini).
           The AI receives analyst consensus, recent news headlines, and excerpts from the most recent 10-K and 10-Q filings
           via semantic search.
         </p>
@@ -751,7 +790,8 @@ function BuffettGuide() {
 
       <Section title="Known Limitations">
         <ul className="list-disc pl-5 space-y-1">
-          <li><strong>Negative equity</strong> (MCD, SBUX, etc.) — share buybacks can make book equity negative. Rule 4 is inapplicable; use the AI Valuation instead.</li>
+          <li><strong>Negative equity</strong> (MCD, SBUX, etc.) — share buybacks can make book equity negative. Rule 4 is inapplicable; the Earnings Power panel is shown automatically.</li>
+          <li><strong>Near-zero equity</strong> (e.g. HALO) — P/B &gt; 50× means book value is less than 2% of market price; the BV-DCF result is meaningless. The Earnings Power panel is shown automatically.</li>
           <li><strong>Financial sector</strong> (banks, insurers) — D/E thresholds don't apply. Rules 3 and 4 may be computed but should be interpreted with caution.</li>
           <li><strong>Stock splits</strong> — BV/share history may show a discontinuity around a split date, distorting the growth rate calculation.</li>
           <li><strong>High BV growth (&gt;20%/yr)</strong> — the stability assumption behind the 10-year DCF projection is less reliable. The card flags this.</li>
