@@ -218,10 +218,11 @@ Rule 4 computes an intrinsic value (IV) using the BuffettsBooks.com Book Value D
 ### When Rule 4 Is Inapplicable
 
 Rule 4 cannot be computed when:
-- **Negative equity** — BV growth formula requires positive book value (BV cannot be negative or zero)
+- **Negative equity** — BV growth formula requires positive book value. Common in companies with aggressive buyback programs (MCD, SBUX) where cumulative repurchases exceed retained earnings.
+- **Near-zero equity** — When P/B > 50x, book value per share is so small relative to the market price (less than 2% of market price) that the DCF produces an economically meaningless result. Example: HALO has BV of $0.41/share vs. a market price of $63 — the formula produces IV ≈ $0.94, which just reflects that HALO isn't worth $0.41. The company's real value comes from future earnings, not assets. This occurs in high-performing companies that have returned most equity to shareholders through buybacks while remaining technically solvent.
 - **Insufficient history** — fewer than 3 years of EDGAR balance sheet data (can't compute a reliable BV growth rate)
 
-In these cases, an **AI Valuation Analysis** is offered as an alternative (see below).
+When Rule 4 is inapplicable, the card automatically shows an **Earnings Power Analysis** panel instead (see below). An **AI Valuation Analysis** is also available on demand.
 
 ### Inputs
 
@@ -326,7 +327,95 @@ Buffett typically requires at least 15–25% margin of safety to account for est
 
 ---
 
-## Option B — AI Valuation Analysis
+## Rule 4 Alternative — Earnings Power Analysis
+
+When Rule 4's BV-DCF is inapplicable, the right panel automatically switches to an **Earnings Power Analysis**. This is appropriate for companies where book value is not a meaningful anchor — the value of the business comes from what it *generates*, not what it *owns*.
+
+The core question shifts from "what are the assets worth?" to "does the stock earn more per dollar than a risk-free Treasury bond, and can the company support its debt?"
+
+### Metrics
+
+#### Earnings Yield
+
+| Field | Details |
+|-------|---------|
+| **Formula** | `EPS ÷ Current Price × 100` |
+| **Source** | yfinance `trailingEps` / `regularMarketPrice` (falls back to `1 / trailingPE` if EPS unavailable) |
+| **Units** | Percentage (e.g., `5.2%`) |
+| **Hurdle** | 10Y Treasury rate (live, same as Rule 4) |
+| **Pass/Fail** | PASS if ≥ 1.5× Treasury rate; BORDERLINE if ≥ Treasury rate; FAIL if below |
+| **Why it matters** | This is Buffett's core bond-vs-stock comparison: if the stock earns less per dollar than a risk-free government bond, the risk premium isn't being compensated. Earnings yield > Treasury rate is the minimum case for ownership. |
+
+---
+
+#### FCF Yield (Free Cash Flow Yield)
+
+| Field | Details |
+|-------|---------|
+| **Formula** | `Free Cash Flow ÷ Market Cap × 100` |
+| **Source** | yfinance `freeCashflow` / `marketCap` |
+| **Units** | Percentage (e.g., `4.8%`) |
+| **Hurdle** | 10Y Treasury rate |
+| **Pass/Fail** | Same thresholds as Earnings Yield |
+| **Why it matters** | Free cash flow is harder to manipulate than reported earnings (no depreciation games, no accruals). FCF yield is often a more honest measure of what the business actually generates per dollar invested. |
+
+---
+
+#### P/E Ratio (Trailing / Forward)
+
+| Field | Details |
+|-------|---------|
+| **Source** | yfinance `trailingPE` / `forwardPE` |
+| **Units** | Ratio (e.g., `22.4x / 18.1x`) |
+| **Threshold** | Context only — no pass/fail |
+| **Why it matters** | Shows how expensive the stock is per dollar of earnings. If forward P/E is significantly below trailing P/E, analysts expect earnings growth. A lower P/E means you're paying less per dollar earned. |
+
+---
+
+#### EPS CAGR
+
+| Field | Details |
+|-------|---------|
+| **Formula** | `(EPS_latest / EPS_oldest) ^ (1 / years) − 1` |
+| **Source** | EDGAR annual income statements (same as Rule 2) |
+| **Units** | Percentage |
+| **Pass/Fail** | PASS if > 10%/yr; BORDERLINE if > 0%; FAIL if declining |
+| **Why it matters** | For companies where book value is not a reliable anchor, consistent earnings growth is the next best signal. A business that compounds earnings at 10%+ per year is creating value even if it shows minimal book equity. |
+
+**Consecutive Positive EPS Years** is also shown — a long streak without a loss indicates a durable, profitable business model.
+
+---
+
+#### Net Debt / EBITDA
+
+| Field | Details |
+|-------|---------|
+| **Formula** | `(Total Debt − Cash & Equivalents) ÷ EBITDA` |
+| **Source** | yfinance `totalDebt`, `totalCash`, `ebitda` |
+| **Units** | Ratio (e.g., `2.1x`) |
+| **Pass/Fail** | PASS if < 3x (or net cash); BORDERLINE if 3x–5x; FAIL if > 5x |
+| **Why it matters** | When book equity is near zero or negative from buybacks, D/E is meaningless. Net Debt/EBITDA replaces it — measuring how many years of operating earnings it would take to retire all net debt. A **net cash position** (negative net debt) is displayed as "Net cash" and always passes. |
+
+---
+
+#### Interest Coverage
+
+| Field | Details |
+|-------|---------|
+| **Formula** | `Operating Income ÷ Interest Expense` (most recent annual period) |
+| **Source** | EDGAR annual income statements |
+| **Units** | Ratio (e.g., `8.4x`) |
+| **Pass/Fail** | PASS if ≥ 5x; BORDERLINE if 2x–5x; FAIL if < 2x |
+| **Why it matters** | Shows whether the company can comfortably service its debt from operating earnings. A company with near-zero equity that also struggles to cover interest is in a precarious position. ≥ 5x means earnings could drop 80% and the company could still service its debt. |
+
+### Earnings Power Overall Score
+
+The overall rule score is computed from Earnings Yield, FCF Yield, Net Debt/EBITDA, and Interest Coverage (metrics with N/A data are excluded). Rules that apply:
+- **PASS** — all available metrics pass
+- **MIXED** — at least one borderline, none hard-failed
+- **FAIL** — any metric is a hard fail
+
+---
 
 When Rule 4 is inapplicable (negative equity, insufficient EDGAR history), the card offers an AI-powered alternative valuation. This uses a reasoning model (o4-mini) with access to:
 
@@ -378,9 +467,18 @@ The output includes bear/base/bull scenario analysis (or equivalent framework fo
 | Dividend Yield | yfinance `dividendYield` | Per page load |
 | Sector / Industry | yfinance `sector`, `industry` | Per page load |
 | Current Price | yfinance `regularMarketPrice` | Per page load |
+| Trailing EPS | yfinance `trailingEps` | Per page load |
+| Trailing / Forward P/E | yfinance `trailingPE`, `forwardPE` | Per page load |
+| Free Cash Flow | yfinance `freeCashflow` | Per page load |
+| Market Cap | yfinance `marketCap` | Per page load |
+| Total Debt | yfinance `totalDebt` | Per page load |
+| Total Cash | yfinance `totalCash` | Per page load |
+| EBITDA | yfinance `ebitda` | Per page load |
 | 10Y Treasury Rate | yfinance `^TNX` | 24 hours |
 | EPS history | EDGAR annual income statements | 15 minutes |
 | Revenue history | EDGAR annual income statements | 15 minutes |
+| Operating Income (most recent) | EDGAR annual income statements | 15 minutes |
+| Interest Expense (most recent) | EDGAR annual income statements | 15 minutes |
 | BV/Share history | EDGAR annual balance sheets | 15 minutes |
 | D/E history | EDGAR annual balance sheets | 15 minutes |
 | ROE history | EDGAR income + balance sheets | 15 minutes |
@@ -392,7 +490,8 @@ The output includes bear/base/bull scenario analysis (or equivalent framework fo
 
 ## Known Limitations
 
-- **Negative equity companies** (MCD, SBUX, etc.): These companies have repurchased so much stock that book equity is negative. Rule 4's BV DCF is mathematically inapplicable. Use the AI Valuation (Option B) instead.
+- **Negative equity companies** (MCD, SBUX, etc.): These companies have repurchased so much stock that book equity is negative. Rule 4's BV DCF is inapplicable. The **Earnings Power Analysis** panel is shown automatically instead.
+- **Near-zero equity companies** (e.g. HALO): Book equity is technically positive but so small (P/B > 50x) that the DCF produces a meaningless result. The **Earnings Power Analysis** panel is shown automatically instead.
 - **Financial sector companies** (banks, insurers): Their balance sheets are structured differently. D/E thresholds don't apply. Rule 3 and Rule 4 may still be computed but should be interpreted with caution.
 - **Stock splits**: A historical BV/share series may show a discontinuity around a split date. The growth rate calculation may be distorted if the oldest data point predates a major split.
 - **< 3 years of EDGAR data**: New public companies or those with limited EDGAR history will show N/A for Rule 3 and Rule 4.

@@ -258,6 +258,32 @@ def extract_financial_time_series(
                 if not period_end:
                     continue
 
+                # For annual data, filter out sub-annual periods embedded in 10-K filings.
+                # Many companies include supplementary quarterly breakdowns inside their 10-K
+                # (e.g. quarterly EPS table), which appear with form="10-K" but cover only
+                # ~90 days. We exclude any duration-based fact whose period is shorter than
+                # 300 days — this keeps full-year (~365d) entries and rejects:
+                #   - Q1/Q2/Q3/Q4 quarterly segments (~90d)
+                #   - 6M YTD segments (~180d)
+                #   - 9M YTD segments (~270d)
+                # 52-week fiscal years are ~364 days so they pass the 300d threshold fine.
+                # Fiscal-year transition 10-Ks (companies that change their fiscal year end
+                # sometimes file a short-period 10-K of 6–9 months) are intentionally excluded
+                # because partial-year snapshots would distort multi-year trend analysis.
+                # Instant facts (balance sheet snapshots) have no "start" date, so we skip
+                # the duration check for those — they're point-in-time values, not periods.
+                if period_type == "annual":
+                    period_start = entry.get("start")
+                    if period_start:
+                        try:
+                            start_d = date_type.fromisoformat(period_start)
+                            end_d = date_type.fromisoformat(period_end)
+                            duration_days = (end_d - start_d).days
+                            if duration_days < 300:
+                                continue  # sub-annual period — skip
+                        except (ValueError, TypeError):
+                            pass  # unparseable date — let it through
+
                 filed = entry.get("filed", "")
                 existing = merged[field_name].get(period_end)
 

@@ -102,6 +102,11 @@ def _get_stock_info_sync(ticker: str) -> dict | None:
         "dividend_rate": info.get("dividendRate"),
         "beta": info.get("beta"),
         "book_value": info.get("bookValue"),
+        # Debt / cash / EBITDA — used by Buffett Rule 4 Alternative panel when BV-DCF
+        # is inapplicable (negative or near-zero equity). Net Debt = totalDebt - totalCash.
+        "total_debt": info.get("totalDebt"),
+        "total_cash": info.get("totalCash"),
+        "ebitda": info.get("ebitda"),
         "fifty_two_week_high": info.get("fiftyTwoWeekHigh"),
         "fifty_two_week_low": info.get("fiftyTwoWeekLow"),
         # Analyst consensus fields — used by Buffett valuation AI prompt.
