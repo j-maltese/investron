@@ -804,7 +804,7 @@ export function BuffettCard({ height, onResizeMouseDown }: BuffettCardProps) {
                   </div>
                 </div>
                 <Sparkline
-                  data={rule2.eps_history.map(e => ({ value: e.value, name: yr(e.period) }))}
+                  data={rule2.eps_history.map(e => ({ value: e.value, label: yr(e.period) }))}
                   color={trendDir(rule2.eps_history) === 'up' ? '#22c55e' : trendDir(rule2.eps_history) === 'down' ? '#ef4444' : '#64748b'}
                   height={48}
                 />
@@ -825,7 +825,7 @@ export function BuffettCard({ height, onResizeMouseDown }: BuffettCardProps) {
                   )}
                 </div>
                 <Sparkline
-                  data={rule2.revenue_history.map(e => ({ value: e.value / 1e9, name: yr(e.period) }))}
+                  data={rule2.revenue_history.map(e => ({ value: e.value / 1e9, label: yr(e.period) }))}
                   color={trendDir(rule2.revenue_history) === 'up' ? '#22c55e' : trendDir(rule2.revenue_history) === 'down' ? '#ef4444' : '#64748b'}
                   height={48}
                 />
