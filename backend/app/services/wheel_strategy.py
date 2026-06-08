@@ -220,7 +220,7 @@ async def run_wheel_cycle(db: AsyncSession, strategy: dict) -> None:
     # "Cash-secured" means we must reserve strike × 100 for each open put position.
     # This prevents over-committing capital across multiple puts.
     committed_cash = sum(
-        float(pos.get("strike_price", 0)) * 100 * (pos.get("contracts") or 1)
+        float(pos.get("strike_price") or 0) * 100 * (pos.get("contracts") or 1)
         for pos in open_positions
         if pos.get("wheel_phase") == "selling_puts" and pos.get("status") == "open"
     )
@@ -352,8 +352,8 @@ async def run_wheel_cycle(db: AsyncSession, strategy: dict) -> None:
         if pos.get("asset_type") == "stock":
             price = underlying_prices[ticker]
             if price is not None:
-                qty = float(pos.get("quantity", 0))
-                entry = float(pos.get("avg_entry_price", 0))
+                qty = float(pos.get("quantity") or 0)
+                entry = float(pos.get("avg_entry_price") or 0)
                 await trading_db.update_position(
                     db, pos["id"],
                     current_value=round(price * qty, 2),
@@ -365,7 +365,7 @@ async def run_wheel_cycle(db: AsyncSession, strategy: dict) -> None:
             option_symbol = pos.get("option_symbol")
             quote = option_quotes.get(option_symbol) if option_symbol else None
             contracts = pos.get("contracts") or 1
-            premium_collected = float(pos.get("cost_basis", 0))  # Total premium we received
+            premium_collected = float(pos.get("cost_basis") or 0)  # Total premium we received
 
             # Store the underlying stock price on option positions so the UI
             # can show Strike / Current for at-a-glance ITM/OTM assessment
@@ -543,7 +543,7 @@ async def _sync_option_orders(db: AsyncSession, strategy_id: str) -> None:
 
             if status["status"] == "filled" and status.get("filled_avg_price"):
                 fill_price = status["filled_avg_price"]
-                fill_qty = status["filled_qty"] or float(order.get("quantity", 0))
+                fill_qty = status["filled_qty"] or float(order.get("quantity") or 0)
                 asset_type = order.get("asset_type", "stock")
                 side = order["side"]
                 contracts = order.get("contracts") or 1
@@ -746,9 +746,9 @@ async def _detect_assignments(db: AsyncSession, strategy: dict) -> None:
                 # the cash accounting in _sync_option_orders.
                 continue
 
-        strike = float(pos.get("strike_price", 0))
+        strike = float(pos.get("strike_price") or 0)
         contracts = pos.get("contracts") or 1
-        premium_received = float(pos.get("cost_basis", 0))  # Premium we collected
+        premium_received = float(pos.get("cost_basis") or 0)  # Premium we collected
 
         if stock_appeared:
             # --- PUT ASSIGNED: We now own 100 shares at the strike price ---
@@ -849,8 +849,8 @@ async def _detect_assignments(db: AsyncSession, strategy: dict) -> None:
                 continue
 
         stock_still_held = ticker in alpaca_stock_symbols
-        strike = float(pos.get("strike_price", 0))
-        call_premium = float(pos.get("cost_basis", 0))
+        strike = float(pos.get("strike_price") or 0)
+        call_premium = float(pos.get("cost_basis") or 0)
 
         if not stock_still_held:
             # --- CALL ASSIGNED: Shares called away at strike price ---
@@ -876,8 +876,8 @@ async def _detect_assignments(db: AsyncSession, strategy: dict) -> None:
             total_cycle_pnl = call_premium  # Start with call premium
             stock_pnl = 0  # Default if stock_pos lookup fails (shouldn't happen)
             if stock_pos:
-                entry_price = float(stock_pos.get("avg_entry_price", 0))
-                qty = float(stock_pos.get("quantity", 100))
+                entry_price = float(stock_pos.get("avg_entry_price") or 0)
+                qty = float(stock_pos.get("quantity") or 100)
                 # Stock P&L = (call_strike - entry_price) × shares
                 stock_pnl = (strike - entry_price) * qty
                 total_cycle_pnl += stock_pnl
@@ -1258,7 +1258,7 @@ async def _sell_call(
 
     # Calculate adjusted cost basis = entry price minus total premiums per share
     adjusted_basis = await _get_adjusted_cost_basis(db, strategy_id, ticker)
-    entry_price = float(stock_position.get("avg_entry_price", 0))
+    entry_price = float(stock_position.get("avg_entry_price") or 0)
 
     # If we couldn't calculate adjusted basis, fall back to entry price
     if adjusted_basis <= 0:
@@ -1723,7 +1723,7 @@ async def _manage_put_position(
     if dte > 3:
         return
 
-    strike = float(position.get("strike_price", 0))
+    strike = float(position.get("strike_price") or 0)
 
     # Check if put is deep ITM (stock significantly below strike)
     roll_threshold = config.get("roll_threshold_pct", 10.0)
@@ -1884,7 +1884,7 @@ async def _manage_put_position(
             # the next cycle (order stays open / gets cancelled) and the
             # assignment-detection logic handles the fallback — which is fine,
             # because assignment is the Wheel's natural flow anyway.
-            old_premium = float(position.get("cost_basis", 0))
+            old_premium = float(position.get("cost_basis") or 0)
             buyback_cost = old_ask * 100
             roll_pnl = old_premium - buyback_cost  # Premium received minus buyback cost
             await trading_db.close_position(db, position["id"], "rolled", round(roll_pnl, 2))
@@ -1982,7 +1982,7 @@ async def _check_hard_stop(
     config = strategy.get("config", {})
     max_loss_pct = config.get("max_stock_loss_pct", 25.0)
 
-    entry_price = float(stock_position.get("avg_entry_price", 0))
+    entry_price = float(stock_position.get("avg_entry_price") or 0)
     if entry_price <= 0:
         return False
 
@@ -1993,7 +1993,7 @@ async def _check_hard_stop(
         return False  # Within tolerance — keep holding
 
     # --- Hard stop triggered: sell the stock immediately ---
-    qty = float(stock_position.get("quantity", 100))
+    qty = float(stock_position.get("quantity") or 100)
     loss_amount = (entry_price - current_price) * qty
 
     # Calculate how much premium we've collected on this ticker to show net impact
@@ -2114,7 +2114,7 @@ async def _check_capital_efficiency(
     if days_held < max_days:
         return False  # Not held long enough to trigger review
 
-    entry_price = float(stock_position.get("avg_entry_price", 0))
+    entry_price = float(stock_position.get("avg_entry_price") or 0)
     if entry_price <= 0:
         return False
 
@@ -2128,7 +2128,7 @@ async def _check_capital_efficiency(
 
     if abs_loss > 15:
         # Down more than 15% after 60+ days — sell to free capital
-        qty = float(stock_position.get("quantity", 100))
+        qty = float(stock_position.get("quantity") or 100)
         loss_amount = (entry_price - current_price) * qty
 
         logger.warning(
@@ -2233,8 +2233,8 @@ async def _manage_call_position(
     position display.
     """
     ticker = position["ticker"]
-    strike = float(position.get("strike_price", 0))
-    entry_premium = float(position.get("avg_entry_price", 0))
+    strike = float(position.get("strike_price") or 0)
+    entry_premium = float(position.get("avg_entry_price") or 0)
 
     # Get current option value for unrealized P&L
     # (Approximate: use latest stock price to estimate if ITM/OTM)
@@ -2308,8 +2308,8 @@ async def _get_adjusted_cost_basis(
     if not stock_pos or stock_pos.get("asset_type") != "stock":
         return 0
 
-    entry_price = float(stock_pos.get("avg_entry_price", 0))
-    qty = float(stock_pos.get("quantity", 100))
+    entry_price = float(stock_pos.get("avg_entry_price") or 0)
+    qty = float(stock_pos.get("quantity") or 100)
 
     if qty <= 0:
         return entry_price
