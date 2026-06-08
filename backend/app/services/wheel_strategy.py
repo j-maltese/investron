@@ -174,6 +174,14 @@ async def run_wheel_cycle(db: AsyncSession, strategy: dict) -> None:
     # This updates local DB with fill prices, credits/debits cash for premiums.
     await _sync_option_orders(db, strategy_id)
 
+    # --- Step 1.5: Sweep orphaned option positions (safety net) ---
+    # _sync_option_orders only reconciles an order while it is still in its
+    # pending-poll filter. Once an order goes terminal it is never polled again,
+    # so any missed position-close leaves a stranded "open" option forever. This
+    # timing-independent DB sweep closes never-filled option positions whose
+    # orders are all terminal and frees stocks stranded in 'selling_calls'.
+    await _cleanup_orphaned_option_positions(db, strategy_id)
+
     # --- Step 2: Detect assignments ---
     # Compare Alpaca's live positions against our local DB to find:
     #   - Puts that were assigned (we now hold stock)
@@ -220,7 +228,7 @@ async def run_wheel_cycle(db: AsyncSession, strategy: dict) -> None:
     # "Cash-secured" means we must reserve strike × 100 for each open put position.
     # This prevents over-committing capital across multiple puts.
     committed_cash = sum(
-        float(pos.get("strike_price", 0)) * 100 * (pos.get("contracts") or 1)
+        float(pos.get("strike_price") or 0) * 100 * (pos.get("contracts") or 1)
         for pos in open_positions
         if pos.get("wheel_phase") == "selling_puts" and pos.get("status") == "open"
     )
@@ -231,20 +239,26 @@ async def run_wheel_cycle(db: AsyncSession, strategy: dict) -> None:
         positions = ticker_positions.get(ticker, [])
 
         try:
-            # Determine the ticker's current wheel state by examining its positions
-            put_pos = _find_position(positions, wheel_phase="selling_puts")
-            stock_pos = _find_position(positions, wheel_phase="assigned")
-            call_pos = _find_position(positions, wheel_phase="selling_calls")
-            # Also check for stock in selling_calls phase (stock position that has a call)
-            stock_with_call = _find_position(positions, asset_type="stock")
+            # Determine the ticker's current wheel state from WHAT WE HOLD, not
+            # from the wheel_phase label alone. The label can fall out of sync —
+            # e.g. a covered-call day order expires unfilled and its option gets
+            # closed, leaving the stock still tagged 'selling_calls' with no call.
+            # Driving Phase 3 off an open OPTION and Phase 2 off simply holding
+            # shares means such a stock still sells a fresh call instead of being
+            # stranded, and a stock can never be misrouted into
+            # _manage_call_position (which reads option fields → None math).
+            call_pos = _find_position(positions, wheel_phase="selling_calls", asset_type="option")
+            put_pos = _find_position(positions, wheel_phase="selling_puts", asset_type="option")
+            stock_pos = _find_position(positions, asset_type="stock")
 
             if call_pos:
                 # Phase 3: We have an open covered call — monitor it
                 await _manage_call_position(db, strategy, call_pos)
 
-            elif stock_pos or (stock_with_call and stock_with_call.get("wheel_phase") == "assigned"):
-                # Phase 2: We hold assigned stock with no call yet
-                active_stock = stock_pos or stock_with_call
+            elif stock_pos:
+                # Phase 2: We hold shares with no open call — sell a covered call.
+                # Covers freshly-assigned stock AND a stock whose prior call died.
+                active_stock = stock_pos
 
                 # Check hard stop FIRST — if stock has crashed, sell immediately
                 if await _check_hard_stop(db, strategy, ticker, active_stock, current_price):
@@ -352,8 +366,8 @@ async def run_wheel_cycle(db: AsyncSession, strategy: dict) -> None:
         if pos.get("asset_type") == "stock":
             price = underlying_prices[ticker]
             if price is not None:
-                qty = float(pos.get("quantity", 0))
-                entry = float(pos.get("avg_entry_price", 0))
+                qty = float(pos.get("quantity") or 0)
+                entry = float(pos.get("avg_entry_price") or 0)
                 await trading_db.update_position(
                     db, pos["id"],
                     current_value=round(price * qty, 2),
@@ -365,7 +379,7 @@ async def run_wheel_cycle(db: AsyncSession, strategy: dict) -> None:
             option_symbol = pos.get("option_symbol")
             quote = option_quotes.get(option_symbol) if option_symbol else None
             contracts = pos.get("contracts") or 1
-            premium_collected = float(pos.get("cost_basis", 0))  # Total premium we received
+            premium_collected = float(pos.get("cost_basis") or 0)  # Total premium we received
 
             # Store the underlying stock price on option positions so the UI
             # can show Strike / Current for at-a-glance ITM/OTM assessment
@@ -543,7 +557,7 @@ async def _sync_option_orders(db: AsyncSession, strategy_id: str) -> None:
 
             if status["status"] == "filled" and status.get("filled_avg_price"):
                 fill_price = status["filled_avg_price"]
-                fill_qty = status["filled_qty"] or float(order.get("quantity", 0))
+                fill_qty = status["filled_qty"] or float(order.get("quantity") or 0)
                 asset_type = order.get("asset_type", "stock")
                 side = order["side"]
                 contracts = order.get("contracts") or 1
@@ -630,6 +644,128 @@ async def _sync_option_orders(db: AsyncSession, strategy_id: str) -> None:
 
         except Exception as e:
             logger.warning("Failed to sync order %s: %s", alpaca_id, e)
+
+
+async def _cleanup_orphaned_option_positions(db: AsyncSession, strategy_id: str) -> None:
+    """Sweep option positions that were never filled and whose orders are all dead.
+
+    SAFETY NET for a structural gap in _sync_option_orders: that function only
+    reconciles an order while it is still in its pending-poll filter. Once an
+    order's status goes terminal (expired/cancelled/rejected) it is never polled
+    again. So if the matching position-close was ever missed — the engine was
+    down at market close when a day order expired, a crash landed between the
+    order-status commit and the position-close commit, the order fell outside the
+    50-row poll window, or (historically) the cleanup code did not yet handle
+    'expired' — the option position is stranded status='open' with
+    avg_entry_price NULL forever and gets reprocessed every cycle.
+
+    This sweep is DB-only and timing-independent. It does two things:
+
+      1. Closes orphaned option positions: open, never filled
+         (avg_entry_price IS NULL), with at least one terminal order and no
+         filled/live order. For calls it hands the shares back to the 'assigned'
+         phase. (Orphaned PUTS also wrongly reserve cash-secured collateral in
+         run_wheel_cycle's committed_cash sum, so clearing them frees capital.)
+
+      2. Reverts any stock left in 'selling_calls' with no open call back to
+         'assigned' — a belt-and-braces catch for stocks stranded by the
+         existing _sync_option_orders cleanup, which closes the dead option but
+         does not touch the stock's phase.
+
+    The predicate is intentionally conservative: a position with a live/pending
+    order today, or any filled order, is never touched.
+    """
+    # --- Part 1: close orphaned, never-filled option positions ---
+    result = await db.execute(
+        text("""
+            SELECT p.id, p.ticker, p.option_type, p.option_symbol
+            FROM trading_positions p
+            WHERE p.strategy_id = :sid
+              AND p.asset_type = 'option'
+              AND p.status = 'open'
+              AND p.avg_entry_price IS NULL                  -- never filled
+              AND EXISTS (
+                  SELECT 1 FROM trading_orders o
+                  WHERE o.position_id = p.id
+                    AND o.status IN ('expired', 'cancelled', 'rejected')
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM trading_orders o2
+                  WHERE o2.position_id = p.id
+                    AND o2.status IN ('filled', 'partially_filled',
+                                      'pending', 'pending_new', 'submitted',
+                                      'accepted', 'new')
+              )
+        """),
+        {"sid": strategy_id},
+    )
+    orphans = [dict(row) for row in result.mappings().all()]
+
+    for orphan in orphans:
+        await trading_db.close_position(db, orphan["id"], "expired")
+
+        # A dead covered call: revert the underlying shares to 'assigned' so the
+        # next cycle sells a fresh call (mirrors the call-expired-OTM path in
+        # _detect_assignments).
+        if orphan.get("option_type") == "call":
+            stock_pos = await _get_open_position_for_ticker(db, strategy_id, orphan["ticker"])
+            if stock_pos and stock_pos.get("asset_type") == "stock":
+                await trading_db.update_position(
+                    db, stock_pos["id"], wheel_phase="assigned",
+                )
+
+        await trading_db.log_activity(
+            db, strategy_id, "blocked_order_failed",
+            f"Swept orphaned {orphan.get('option_type') or 'option'} position for "
+            f"{orphan['ticker']} ({orphan.get('option_symbol') or ''}) — order ended "
+            f"unfilled but the position was left open",
+            ticker=orphan["ticker"],
+            details={
+                "position_id": orphan["id"],
+                "option_symbol": orphan.get("option_symbol"),
+                "reason": "orphaned option position (never filled, order terminal)",
+            },
+        )
+
+    # --- Part 2: free stocks stranded in 'selling_calls' with no open call ---
+    # Runs after Part 1 so a just-closed orphan no longer counts as an open call.
+    stranded = await db.execute(
+        text("""
+            UPDATE trading_positions s
+            SET wheel_phase = 'assigned', updated_at = NOW()
+            WHERE s.strategy_id = :sid
+              AND s.asset_type = 'stock'
+              AND s.status = 'open'
+              AND s.wheel_phase = 'selling_calls'
+              AND NOT EXISTS (
+                  SELECT 1 FROM trading_positions c
+                  WHERE c.strategy_id = s.strategy_id
+                    AND c.ticker = s.ticker
+                    AND c.asset_type = 'option'
+                    AND c.option_type = 'call'
+                    AND c.status = 'open'
+              )
+            RETURNING s.ticker
+        """),
+        {"sid": strategy_id},
+    )
+    reverted = [row["ticker"] for row in stranded.mappings().all()]
+    if reverted:
+        await trading_db.log_activity(
+            db, strategy_id, "phase_transition",
+            f"Reverted stranded stock(s) to 'assigned' (no open call): {', '.join(reverted)}",
+            details={"tickers": reverted, "reason": "stranded in selling_calls with no open call"},
+        )
+
+    # Part 2 issued a raw UPDATE — commit it. (close_position / update_position /
+    # log_activity in Part 1 each commit themselves; this statement does not.)
+    await db.commit()
+
+    if orphans or reverted:
+        logger.info(
+            "Orphan sweep: closed %d option position(s), reverted %d stranded stock(s) for %s",
+            len(orphans), len(reverted), strategy_id,
+        )
 
 
 async def _adjust_strategy_cash(db: AsyncSession, strategy_id: str, amount: float) -> None:
@@ -746,9 +882,9 @@ async def _detect_assignments(db: AsyncSession, strategy: dict) -> None:
                 # the cash accounting in _sync_option_orders.
                 continue
 
-        strike = float(pos.get("strike_price", 0))
+        strike = float(pos.get("strike_price") or 0)
         contracts = pos.get("contracts") or 1
-        premium_received = float(pos.get("cost_basis", 0))  # Premium we collected
+        premium_received = float(pos.get("cost_basis") or 0)  # Premium we collected
 
         if stock_appeared:
             # --- PUT ASSIGNED: We now own 100 shares at the strike price ---
@@ -849,8 +985,8 @@ async def _detect_assignments(db: AsyncSession, strategy: dict) -> None:
                 continue
 
         stock_still_held = ticker in alpaca_stock_symbols
-        strike = float(pos.get("strike_price", 0))
-        call_premium = float(pos.get("cost_basis", 0))
+        strike = float(pos.get("strike_price") or 0)
+        call_premium = float(pos.get("cost_basis") or 0)
 
         if not stock_still_held:
             # --- CALL ASSIGNED: Shares called away at strike price ---
@@ -876,8 +1012,8 @@ async def _detect_assignments(db: AsyncSession, strategy: dict) -> None:
             total_cycle_pnl = call_premium  # Start with call premium
             stock_pnl = 0  # Default if stock_pos lookup fails (shouldn't happen)
             if stock_pos:
-                entry_price = float(stock_pos.get("avg_entry_price", 0))
-                qty = float(stock_pos.get("quantity", 100))
+                entry_price = float(stock_pos.get("avg_entry_price") or 0)
+                qty = float(stock_pos.get("quantity") or 100)
                 # Stock P&L = (call_strike - entry_price) × shares
                 stock_pnl = (strike - entry_price) * qty
                 total_cycle_pnl += stock_pnl
@@ -1258,7 +1394,7 @@ async def _sell_call(
 
     # Calculate adjusted cost basis = entry price minus total premiums per share
     adjusted_basis = await _get_adjusted_cost_basis(db, strategy_id, ticker)
-    entry_price = float(stock_position.get("avg_entry_price", 0))
+    entry_price = float(stock_position.get("avg_entry_price") or 0)
 
     # If we couldn't calculate adjusted basis, fall back to entry price
     if adjusted_basis <= 0:
@@ -1723,7 +1859,7 @@ async def _manage_put_position(
     if dte > 3:
         return
 
-    strike = float(position.get("strike_price", 0))
+    strike = float(position.get("strike_price") or 0)
 
     # Check if put is deep ITM (stock significantly below strike)
     roll_threshold = config.get("roll_threshold_pct", 10.0)
@@ -1884,7 +2020,7 @@ async def _manage_put_position(
             # the next cycle (order stays open / gets cancelled) and the
             # assignment-detection logic handles the fallback — which is fine,
             # because assignment is the Wheel's natural flow anyway.
-            old_premium = float(position.get("cost_basis", 0))
+            old_premium = float(position.get("cost_basis") or 0)
             buyback_cost = old_ask * 100
             roll_pnl = old_premium - buyback_cost  # Premium received minus buyback cost
             await trading_db.close_position(db, position["id"], "rolled", round(roll_pnl, 2))
@@ -1982,7 +2118,7 @@ async def _check_hard_stop(
     config = strategy.get("config", {})
     max_loss_pct = config.get("max_stock_loss_pct", 25.0)
 
-    entry_price = float(stock_position.get("avg_entry_price", 0))
+    entry_price = float(stock_position.get("avg_entry_price") or 0)
     if entry_price <= 0:
         return False
 
@@ -1993,7 +2129,7 @@ async def _check_hard_stop(
         return False  # Within tolerance — keep holding
 
     # --- Hard stop triggered: sell the stock immediately ---
-    qty = float(stock_position.get("quantity", 100))
+    qty = float(stock_position.get("quantity") or 100)
     loss_amount = (entry_price - current_price) * qty
 
     # Calculate how much premium we've collected on this ticker to show net impact
@@ -2114,7 +2250,7 @@ async def _check_capital_efficiency(
     if days_held < max_days:
         return False  # Not held long enough to trigger review
 
-    entry_price = float(stock_position.get("avg_entry_price", 0))
+    entry_price = float(stock_position.get("avg_entry_price") or 0)
     if entry_price <= 0:
         return False
 
@@ -2128,7 +2264,7 @@ async def _check_capital_efficiency(
 
     if abs_loss > 15:
         # Down more than 15% after 60+ days — sell to free capital
-        qty = float(stock_position.get("quantity", 100))
+        qty = float(stock_position.get("quantity") or 100)
         loss_amount = (entry_price - current_price) * qty
 
         logger.warning(
@@ -2233,8 +2369,8 @@ async def _manage_call_position(
     position display.
     """
     ticker = position["ticker"]
-    strike = float(position.get("strike_price", 0))
-    entry_premium = float(position.get("avg_entry_price", 0))
+    strike = float(position.get("strike_price") or 0)
+    entry_premium = float(position.get("avg_entry_price") or 0)
 
     # Get current option value for unrealized P&L
     # (Approximate: use latest stock price to estimate if ITM/OTM)
@@ -2308,8 +2444,8 @@ async def _get_adjusted_cost_basis(
     if not stock_pos or stock_pos.get("asset_type") != "stock":
         return 0
 
-    entry_price = float(stock_pos.get("avg_entry_price", 0))
-    qty = float(stock_pos.get("quantity", 100))
+    entry_price = float(stock_pos.get("avg_entry_price") or 0)
+    qty = float(stock_pos.get("quantity") or 100)
 
     if qty <= 0:
         return entry_price
