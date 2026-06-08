@@ -1,0 +1,23 @@
+{
+  "version": "0.1.58",
+  "date": "2026-06-08",
+  "title": "v0.1.58",
+  "summary": "Release 0.1.58 includes 1 enhancement, 2 bug fixes.",
+  "sections": [
+    {
+      "type": "bug_fix",
+      "label": "Bug Fixes",
+      "items": [
+        "Self-heal orphaned wheel option positions and stale phase labels",
+        "Guard float() casts against NULL position fields in wheel strategy"
+      ]
+    },
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Test: cover wheel orphan sweep + dispatch; add manual cleanup SQL"
+      ]
+    }
+  ]
+}
