@@ -67,6 +67,14 @@ async def _run_migrations():
                 "ADD COLUMN IF NOT EXISTS underlying_price DECIMAL(12,4)"
             ))
 
+            # Trading: peak_price high-water mark for the Wheel runner trailing stop.
+            # Tracks the highest underlying price a position has reached so the
+            # trailing stop can ratchet up and protect an appreciated position.
+            await db.execute(text(
+                "ALTER TABLE trading_positions "
+                "ADD COLUMN IF NOT EXISTS peak_price DECIMAL(12,4)"
+            ))
+
             # Per-user watchlists: user_email column + unique constraint swap
             await db.execute(text(
                 "ALTER TABLE watchlist_items "

@@ -40,6 +40,7 @@ on delta, DTE, yield, and open interest thresholds from the JSONB config.
 """
 
 import logging
+import math
 from datetime import datetime, timezone, date as date_type, timedelta
 
 from sqlalchemy import text
@@ -263,6 +264,15 @@ async def run_wheel_cycle(db: AsyncSession, strategy: dict) -> None:
                 # Check hard stop FIRST — if stock has crashed, sell immediately
                 if await _check_hard_stop(db, strategy, ticker, active_stock, current_price):
                     # Stock was sold, cash freed. Update available cash.
+                    strategy = await trading_db.get_strategy(db, strategy_id)
+                    available_cash = float(strategy["current_cash"]) - committed_cash
+                    continue
+
+                # Check trailing stop — protect the gain on a runner we can't
+                # exit via a call (illiquid chain or Alpaca block). No-op unless
+                # the position is well above basis (mutually exclusive with the
+                # hard stop, which only fires on losses).
+                if await _check_trailing_stop(db, strategy, ticker, active_stock, current_price):
                     strategy = await trading_db.get_strategy(db, strategy_id)
                     available_cash = float(strategy["current_cash"]) - committed_cash
                     continue
@@ -1434,6 +1444,45 @@ async def _sell_call(
         chain, "call", config, current_price, min_strike=min_strike,
     )
 
+    # --- Runner-mode fallback (Lever A) -------------------------------------
+    # If the standard delta band found nothing AND this is a position that has
+    # run far above its basis (one we'd be happy to exit), retry with a relaxed
+    # delta ceiling so we can write a near-the-money call and harvest the gain
+    # via a profitable called-away exit. This is strictly a FALLBACK — the
+    # normal band is always tried first, so normal positions are untouched.
+    # OTM-only: min_strike is floored at the current price so any called-away
+    # exit is always at or above today's mark (a gain stacked on the run).
+    if (not ranked
+            and config.get("runner_mode_enabled", True)
+            and _is_runner(current_price, adjusted_basis, config)):
+        delta_max_runner = config.get("delta_max_runner", 0.60)
+        runner_min_strike = max(min_strike, current_price)
+        ranked, rejections = _select_best_option(
+            chain, "call", config, current_price,
+            min_strike=runner_min_strike, delta_max_override=delta_max_runner,
+        )
+        gain_pct = ((current_price / adjusted_basis) - 1) * 100 if adjusted_basis > 0 else 0
+        await trading_db.log_activity(
+            db, strategy_id, "runner_mode",
+            f"Runner-mode for {ticker}: +{gain_pct:.0f}% over adj basis "
+            f"(${adjusted_basis:.2f}), no standard call available — retrying with "
+            f"delta ceiling {delta_max_runner:.2f}, strike >= ${runner_min_strike:.2f} "
+            f"({len(ranked)} candidate(s) found)",
+            ticker=ticker,
+            details={
+                "ticker": ticker, "current_price": current_price,
+                "adjusted_basis": adjusted_basis, "gain_pct": round(gain_pct, 1),
+                "delta_max_runner": delta_max_runner,
+                "runner_min_strike": round(runner_min_strike, 2),
+                "candidates_after_retry": len(ranked),
+                "reason": (
+                    f"{ticker} is +{gain_pct:.0f}% over adjusted basis and no call "
+                    f"passed the standard delta band — relaxing ceiling to "
+                    f"{delta_max_runner:.2f} (OTM-only) to harvest via assignment"
+                ),
+            },
+        )
+
     if not ranked:
         # Cooldown so we don't spam the log every cycle for illiquid chains
         # (e.g. MTG: all OTM calls have $0 bid, retrying every 5min is noise)
@@ -1612,6 +1661,55 @@ async def _sell_call(
 
 
 # ---------------------------------------------------------------------------
+# Runner-mode & option-math helpers
+# ---------------------------------------------------------------------------
+
+
+def _is_runner(current_price: float, adjusted_basis: float, config: dict) -> bool:
+    """Return True if a held position has appreciated far enough above its
+    adjusted cost basis to qualify for "runner" handling.
+
+    A runner is a position that has climbed well beyond where the standard
+    covered-call delta band can write a sensible call — the profitable strikes
+    sit above the 0.30-delta ceiling, so nothing passes (see TMHC). Gating the
+    runner-mode behaviors (relaxed call delta + trailing stop) on this keeps the
+    normal Wheel untouched: only genuine, rare runs trigger it.
+
+        is_runner = current_price >= adjusted_basis * (1 + runner_gain_pct/100)
+    """
+    if adjusted_basis is None or adjusted_basis <= 0 or current_price <= 0:
+        return False
+    runner_gain_pct = config.get("runner_gain_pct", 20.0)
+    return current_price >= adjusted_basis * (1 + runner_gain_pct / 100)
+
+
+def _estimate_delta(option_type: str, S: float, K: float, dte_days: int, iv: float) -> float:
+    """Estimate an option's |delta| via Black-Scholes when Alpaca omits greeks.
+
+    Far more accurate than a raw moneyness ratio (the previous fallback, which
+    mis-scaled to ~1.0 at the money and would reject nearly every writable
+    call). The risk-free rate is omitted — negligible at the short DTEs the
+    Wheel trades. N() is the standard-normal CDF via math.erf. Returns the
+    magnitude in [0, 1] so it compares directly against delta_min / delta_max.
+
+        d1 = [ln(S/K) + (sigma^2 / 2) * T] / (sigma * sqrt(T)),   T = dte/365
+        call delta = N(d1);   put delta = N(d1) - 1   (we return the magnitude)
+    """
+    # Degenerate inputs — fall back to a pure intrinsic (ITM=1 / OTM=0) signal.
+    if S <= 0 or K <= 0 or iv <= 0 or dte_days <= 0:
+        if option_type == "call":
+            return 1.0 if S > K else 0.0
+        return 1.0 if S < K else 0.0
+
+    T = dte_days / 365.0
+    d1 = (math.log(S / K) + 0.5 * iv * iv * T) / (iv * math.sqrt(T))
+    n_d1 = 0.5 * (1.0 + math.erf(d1 / math.sqrt(2.0)))  # N(d1)
+    if option_type == "call":
+        return n_d1
+    return abs(n_d1 - 1.0)  # |put delta|
+
+
+# ---------------------------------------------------------------------------
 # Option chain filtering and scoring
 # ---------------------------------------------------------------------------
 
@@ -1623,6 +1721,7 @@ def _select_best_option(
     stock_price: float,
     max_strike: float | None = None,
     min_strike: float | None = None,
+    delta_max_override: float | None = None,
 ) -> dict | None:
     """Filter and score an option chain, returning ranked candidates.
 
@@ -1652,7 +1751,9 @@ def _select_best_option(
     """
     # Extract config thresholds with defaults
     delta_min = config.get("delta_min", 0.15)
-    delta_max = config.get("delta_max", 0.30)
+    # delta_max_override lets runner-mode (Lever A) relax the ceiling for a
+    # single retry without mutating the strategy config.
+    delta_max = delta_max_override if delta_max_override is not None else config.get("delta_max", 0.30)
     yield_min = config.get("yield_min", 0.04)
     yield_max = config.get("yield_max", 1.00)
     exp_min_days = config.get("expiration_min_days", 7)
@@ -1717,21 +1818,16 @@ def _select_best_option(
                 rejections["delta"] += 1
                 continue  # Outside our delta range
         else:
-            # Moneyness proxy for delta:
-            # For puts: how far OTM (lower strike = lower delta)
-            #   proxy = 1 - (stock_price - strike) / stock_price
-            # For calls: how far OTM (higher strike = lower delta)
-            #   proxy = 1 - (strike - stock_price) / stock_price
-            # This is a rough approximation — real delta depends on IV, time, etc.
-            if option_type == "put":
-                proxy = max(0, min(1, 1 - (stock_price - strike) / stock_price))
-            else:
-                proxy = max(0, min(1, 1 - (strike - stock_price) / stock_price))
-
-            if proxy < delta_min or proxy > delta_max:
+            # Greeks unavailable — estimate |delta| via Black-Scholes. This is
+            # far more accurate than the old moneyness ratio (which mis-scaled to
+            # ~1.0 at the money and would reject nearly every writable call). Use
+            # the contract's implied volatility if present, else the strategy's
+            # default_iv as a reasonable fallback.
+            iv = contract.get("implied_volatility") or config.get("default_iv", 0.30)
+            abs_delta = _estimate_delta(option_type, stock_price, strike, dte, float(iv))
+            if abs_delta < delta_min or abs_delta > delta_max:
                 rejections["delta"] += 1
                 continue
-            abs_delta = proxy
 
         # --- Step 5: Bid price validity ---
         bid = contract.get("bid_price")
@@ -2203,6 +2299,130 @@ async def _check_hard_stop(
         await trading_db.log_activity(
             db, strategy_id, "error",
             f"Hard stop sell failed for {ticker}: {str(e)[:200]}",
+            ticker=ticker,
+        )
+        return False
+
+
+async def _check_trailing_stop(
+    db: AsyncSession,
+    strategy: dict,
+    ticker: str,
+    stock_position: dict,
+    current_price: float,
+) -> bool:
+    """Protect an appreciated 'runner' by trailing a stop below its peak price.
+
+    The standard Wheel only exits assigned stock on the downside (hard stop) or
+    via a covered call being assigned. A position that runs far above its basis
+    but CAN'T be written against — illiquid chain, or Alpaca blocking option
+    writes (e.g. PAGS) — would otherwise sit fully exposed: its hard stop is far
+    below the entry price, so a complete round-trip of the gain triggers nothing.
+
+    This is the universal backstop for that gap. It acts only on runners
+    (current >= adjusted_basis * (1 + runner_gain_pct)), tracks a per-position
+    high-water mark (peak_price), and market-sells if the price falls
+    trailing_stop_pct below that peak. The peak ratchets up as the stock climbs,
+    locking in progressively more gain. Mutually exclusive with the hard stop in
+    practice (a position can't be both up >runner_gain_pct and down >max loss).
+
+    NOTE: peak tracking happens here, in the assigned (no-open-call) branch. When
+    a covered call IS open the call itself caps/protects the position, so the
+    trailing stop intentionally pauses — the two levers hand off.
+
+    Returns True if the stock was sold (exited), False otherwise.
+    """
+    strategy_id = strategy["id"]
+    config = strategy.get("config", {})
+
+    if not config.get("trailing_stop_enabled", True):
+        return False
+
+    # Only protect genuine runners — keeps the normal Wheel untouched.
+    adjusted_basis = await _get_adjusted_cost_basis(db, strategy_id, ticker)
+    if adjusted_basis <= 0:
+        adjusted_basis = float(stock_position.get("avg_entry_price") or 0)
+    if not _is_runner(current_price, adjusted_basis, config):
+        return False
+
+    # Update the high-water mark. A null stored peak (never set, or a position
+    # that just became a runner) is seeded with the current price.
+    stored_peak = stock_position.get("peak_price")
+    if stored_peak is None:
+        peak = current_price
+    else:
+        peak = max(float(stored_peak), current_price)
+    if stored_peak is None or peak > float(stored_peak):
+        await trading_db.update_position(db, stock_position["id"], peak_price=round(peak, 4))
+
+    trailing_pct = config.get("trailing_stop_pct", 10.0)
+    trigger_price = peak * (1 - trailing_pct / 100)
+
+    if current_price > trigger_price:
+        return False  # Still within the trailing band — keep holding
+
+    # --- Trailing stop triggered: sell the stock at market ---
+    qty = float(stock_position.get("quantity") or 100)
+    entry_price = float(stock_position.get("avg_entry_price") or 0)
+    realized_pnl = (current_price - entry_price) * qty
+    drop_from_peak = ((peak - current_price) / peak) * 100 if peak > 0 else 0
+    gain_pct = ((current_price / adjusted_basis) - 1) * 100 if adjusted_basis > 0 else 0
+
+    logger.warning(
+        "Trailing stop triggered: %s fell %.1f%% from peak $%.2f to $%.2f, selling",
+        ticker, drop_from_peak, peak, current_price,
+    )
+
+    try:
+        order_result = await alpaca_client.submit_stock_order(
+            ticker=ticker, qty=qty, side="sell", order_type="market",
+        )
+        await trading_db.insert_order(db, {
+            "strategy_id": strategy_id,
+            "position_id": stock_position["id"],
+            "alpaca_order_id": order_result.get("alpaca_order_id"),
+            "ticker": ticker,
+            "asset_type": "stock",
+            "side": "sell",
+            "order_type": "market",
+            "quantity": qty,
+            "status": order_result.get("status", "submitted"),
+            "reason": f"Trailing stop: fell {drop_from_peak:.1f}% from peak ${peak:.2f}",
+        })
+        await trading_db.close_position(
+            db, stock_position["id"], "trailing_stop", round(realized_pnl, 2),
+        )
+        await trading_db.log_activity(
+            db, strategy_id, "trailing_stop",
+            f"Trailing stop on {ticker}: fell {drop_from_peak:.1f}% from peak "
+            f"${peak:.2f} to ${current_price:.2f}, selling. Locked gain: "
+            f"${realized_pnl:+.0f} (+{gain_pct:.0f}% over adj basis ${adjusted_basis:.2f})",
+            ticker=ticker,
+            details={
+                "ticker": ticker, "peak_price": round(peak, 2),
+                "exit_price": current_price, "drop_from_peak_pct": round(drop_from_peak, 1),
+                "entry_price": entry_price, "realized_pnl": round(realized_pnl, 2),
+                "gain_pct_over_basis": round(gain_pct, 1),
+                "adjusted_basis": round(adjusted_basis, 2),
+                "trailing_stop_pct": trailing_pct,
+                "reason": (
+                    f"Trailing stop: {ticker} fell {drop_from_peak:.1f}% from peak "
+                    f"${peak:.2f}, exceeds {trailing_pct:.0f}% trailing_stop_pct"
+                ),
+            },
+        )
+        await trading_db.log_activity(
+            db, strategy_id, "phase_transition",
+            f"{ticker}: assigned → idle (trailing stop exit)",
+            ticker=ticker,
+        )
+        return True
+
+    except Exception as e:
+        logger.error("Trailing stop sell failed for %s: %s", ticker, e)
+        await trading_db.log_activity(
+            db, strategy_id, "error",
+            f"Trailing stop sell failed for {ticker}: {str(e)[:200]}",
             ticker=ticker,
         )
         return False
