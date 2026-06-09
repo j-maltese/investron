@@ -1,0 +1,24 @@
+{
+  "version": "0.1.59",
+  "date": "2026-06-09",
+  "title": "v0.1.59",
+  "summary": "Release 0.1.59 includes 1 new feature, 3 enhancements.",
+  "sections": [
+    {
+      "type": "new_feature",
+      "label": "New Features",
+      "items": [
+        "Runner harvest for the Wheel (relaxed call delta + trailing stop) + BS delta"
+      ]
+    },
+    {
+      "type": "enhancement",
+      "label": "Enhancements",
+      "items": [
+        "Chore: remove one-off orphan-cleanup SQL script",
+        "Docs: sync TRADING_README with runner-harvest features",
+        "Docs: document runner harvest in the Wheel Strategy Guide"
+      ]
+    }
+  ]
+}
