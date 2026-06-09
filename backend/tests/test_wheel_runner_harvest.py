@@ -218,6 +218,11 @@ async def test_trailing_stop_triggers_sell_below_peak(patched_tb_and_alpaca):
         MagicMock(), _strategy(), "TMHC", pos, 80.0)
     assert sold is True
     ac.submit_stock_order.assert_awaited_once()
+    # Protective LIMIT (not market), priced 2% below the trusted reference (80) so
+    # a glitchy Alpaca quote can't fill far below fair value.
+    kwargs = ac.submit_stock_order.await_args.kwargs
+    assert kwargs["order_type"] == "limit"
+    assert kwargs["limit_price"] == pytest.approx(78.40)
     # Closed as 'trailing_stop' with realized P&L = (80 - 55) * 100 = 2500.
     args, _ = td.close_position.await_args
     assert args[1] == 7 and args[2] == "trailing_stop"
@@ -271,3 +276,19 @@ async def test_share_qty_ignores_option_legs_of_same_root():
     with patch.object(wheel_strategy.alpaca_client, "get_positions",
                       new=AsyncMock(return_value=positions)):
         assert await wheel_strategy._get_alpaca_share_qty("PAGS") == 0.0
+
+
+# ---------------------------------------------------------------------------
+# _protective_sell_limit_price (safe stop-exit pricing off trusted reference)
+# ---------------------------------------------------------------------------
+
+
+def test_protective_sell_limit_price_default_offset():
+    # Default 2% below the trusted reference price (71.50 → 70.07).
+    assert wheel_strategy._protective_sell_limit_price(71.50, {}) == pytest.approx(70.07)
+
+
+def test_protective_sell_limit_price_config_override():
+    # Offset is tunable via wheel config.
+    assert wheel_strategy._protective_sell_limit_price(
+        100.0, {"stop_loss_limit_offset_pct": 5.0}) == pytest.approx(95.0)

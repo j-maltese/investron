@@ -392,7 +392,8 @@ VALUES
         "delta_max_runner": 0.60,
         "trailing_stop_enabled": true,
         "trailing_stop_pct": 10.0,
-        "default_iv": 0.30
+        "default_iv": 0.30,
+        "stop_loss_limit_offset_pct": 2.0
     }'::jsonb)
 ON CONFLICT (id) DO NOTHING;
 
@@ -423,7 +424,8 @@ SET
         "delta_max_runner": 0.60,
         "trailing_stop_enabled": true,
         "trailing_stop_pct": 10.0,
-        "default_iv": 0.30
+        "default_iv": 0.30,
+        "stop_loss_limit_offset_pct": 2.0
     }'::jsonb
 WHERE id = 'wheel';
 
