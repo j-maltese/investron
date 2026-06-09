@@ -3,7 +3,7 @@
 Investron can automatically trade on your behalf using Alpaca Markets' paper trading API. Two independent strategies run in the background, each with its own capital allocation and trading logic:
 
 1. **Simple Stock Trading** ($500 paper) — AI-powered buy/sell of common stock, leveraging the screener scores and GPT-4o analysis
-2. **The Wheel Strategy** ($30,000 paper) — Mechanical options income strategy: sell cash-secured puts, get assigned stock, sell covered calls, repeat. Screener-driven dynamic candidate selection with sector diversification. Full defensive suite with hard stops, rolling puts, adjusted cost basis tracking, and capital efficiency exits
+2. **The Wheel Strategy** ($30,000 paper) — Mechanical options income strategy: sell cash-secured puts, get assigned stock, sell covered calls, repeat. Screener-driven dynamic candidate selection with sector diversification. Full defensive suite with hard stops, rolling puts, adjusted cost basis tracking, capital efficiency exits, and runner harvest (relaxed-delta call writing + trailing stop for positions that run far above basis)
 
 ## How It Works
 
@@ -268,7 +268,13 @@ Trading Engine (background loop, runs every 60s during market hours)
     "call_min_strike_pct": -5.0,
     "capital_efficiency_days": 60,
     "pdt_protection": true,
-    "check_interval_minutes": 15
+    "check_interval_minutes": 15,
+    "runner_mode_enabled": true,
+    "runner_gain_pct": 20.0,
+    "delta_max_runner": 0.60,
+    "trailing_stop_enabled": true,
+    "trailing_stop_pct": 10.0,
+    "default_iv": 0.30
 }
 ```
 
@@ -291,6 +297,12 @@ Trading Engine (background loop, runs every 60s during market hours)
 | `call_min_strike_pct` | -5% | Allow selling calls up to 5% below adjusted cost basis for capital efficiency |
 | `capital_efficiency_days` | 60 | Review assigned stock if held longer than this with no recovery |
 | `pdt_protection` | true | Track day trades, block if would exceed 3-per-5-day PDT limit |
+| `runner_mode_enabled` | true | Master toggle for runner-mode call writing (relaxed delta ceiling on deeply appreciated positions) |
+| `runner_gain_pct` | 20% | Gain over adjusted basis that classifies a position as a "runner" (gates runner-mode + trailing stop) |
+| `delta_max_runner` | 0.60 | Raised delta ceiling used only in runner mode, so a near-the-money call can be written to harvest the gain |
+| `trailing_stop_enabled` | true | Master toggle for the runner trailing stop |
+| `trailing_stop_pct` | 10% | How far price may fall from its peak before the trailing stop sells (runners only) |
+| `default_iv` | 0.30 | Fallback implied volatility for the Black-Scholes delta estimate when greeks are unavailable |
 
 ### Backend Services
 
@@ -672,7 +684,7 @@ Updates strategy-level P&L aggregates from position data.
 1. Correct option type (put for phase 1, call for phase 3)
 2. Strike within constraint (puts: ≤ stock price; calls: ≥ min_strike from adjusted cost basis)
 3. DTE within configured range (default 7-45 days)
-4. Delta within configured range (default 0.15-0.30, using moneyness proxy if greeks unavailable)
+4. Delta within configured range (default 0.15-0.30; a Black-Scholes estimate is used if greeks are unavailable). The ceiling can be raised for a single retry via `delta_max_override` — see runner-mode below.
 5. Bid > 0 (option must have a market)
 6. Annualized premium yield within range (default 4%-100%)
 
@@ -687,7 +699,7 @@ Updates strategy-level P&L aggregates from position data.
 
 **Order-first, position-second:** Position records are only created in the database after Alpaca accepts the order. This prevents orphaned position rows when orders are rejected.
 
-**Moneyness fallback:** When Alpaca doesn't return greeks (common for some option chains), delta is estimated from how far the strike is from the stock price — a rough but usable proxy.
+**Black-Scholes delta fallback (`_estimate_delta`):** When Alpaca doesn't return greeks, delta is estimated with a Black-Scholes model — `call delta = N(d1)`, computed from stock price, strike, DTE, and the contract's implied volatility (or `default_iv` if absent). This replaced an earlier moneyness ratio that mis-scaled to ~1.0 at the money and would have rejected nearly every writable call. Currently dormant in practice (greeks are available), but keeps the delta filter accurate if the feed ever drops them.
 
 ### Defensive Features
 
@@ -704,6 +716,10 @@ Updates strategy-level P&L aggregates from position data.
 
 **Capital Efficiency Exits (`_check_capital_efficiency`):** Assigned stock held for more than `capital_efficiency_days` (default 60) with no price recovery is tying up capital unproductively. If down > 15%: sells and frees the capital. If down 5-15%: sells a more aggressive call (closer to ATM) to accelerate the exit.
 
+**Runner Harvest — relaxed-delta call writing (`_sell_call` + `_is_runner`):** When an assigned stock runs far above its cost basis, the profitable call strikes sit above the standard 0.15-0.30 delta band, so no call gets written. If a position is a "runner" (`current_price ≥ adjusted_basis × (1 + runner_gain_pct)`, default +20%) and the standard band returns nothing, `_sell_call` retries `_select_best_option` with a raised ceiling (`delta_max_runner`, default 0.60) and `min_strike` floored at the current price (OTM-only). This writes a near-the-money call to harvest the gain via a profitable called-away exit. Strictly a fallback — the normal band is always tried first, so normal positions are untouched. Logs: `runner_mode`. Toggle: `runner_mode_enabled`.
+
+**Runner Trailing Stop (`_check_trailing_stop`):** The backstop for runners that *can't* be written against (illiquid chain, or the broker blocks the option order — e.g. PAGS "not eligible for uncovered options"). Runs each ~60s cycle beside the hard stop, gated to runners. Tracks a per-position high-water mark (`peak_price` column) and market-sells if price falls `trailing_stop_pct` (default 10%) below the peak; the peak ratchets up as the stock climbs, locking in progressively more gain. Mutually exclusive with the hard stop in practice (a position can't be both up >`runner_gain_pct` and down >`max_stock_loss_pct`). Peak tracking pauses while a covered call is open (the call itself caps/protects the position). Logs: `trailing_stop`. Toggle: `trailing_stop_enabled`.
+
 **PDT Protection (`_would_exceed_pdt`):** Accounts under $25,000 are limited to 3 day trades per rolling 5 business days. Before executing a roll or same-day close, counts recent round-trip trades. If at limit, logs `blocked_pdt_limit` and skips the action.
 
 ### Cash Management
@@ -715,7 +731,7 @@ Updates strategy-level P&L aggregates from position data.
 | Sell call fills | +premium (fill × 100) | Sync detects fill |
 | Call assigned (called away) | +(strike × 100) | Assignment detection |
 | Buy-to-close (roll) | −(fill × 100) | Sync detects fill |
-| Hard stop / efficiency sell | +proceeds (fill × qty) | Sync detects fill |
+| Hard stop / efficiency / trailing-stop sell | +proceeds (fill × qty) | Sync detects fill |
 
 Cash changes for order fills are asynchronous: the order is submitted immediately, but cash is adjusted when `_sync_option_orders` detects the fill from Alpaca (typically next cycle, ~60s). Assignment-related cash changes (put assigned, called away) happen synchronously during `_detect_assignments`.
 
@@ -770,6 +786,8 @@ Both strategies generate extensive activity logs for monitoring. Three categorie
 | `roll_executed` | Wheel | Put rolled to new strike/date (includes old/new symbols, net credit) |
 | `hard_stop` | Wheel | Stock sold on hard stop (includes entry/exit price, loss %, premiums collected) |
 | `capital_efficiency_exit` | Wheel | Stock sold after extended hold (includes days held, loss %) |
+| `runner_mode` | Wheel | Standard band found no call on a runner; delta ceiling relaxed to write near-the-money (includes gain over basis, relaxed params) |
+| `trailing_stop` | Wheel | Runner pulled back from its peak and was sold to lock the gain (includes peak price, drop from peak, realized P&L) |
 | `auto_index` | Simple Stock | Daily SEC filing indexing started/completed (includes ticker list) |
 
 **Execution logs** (what happened, when):

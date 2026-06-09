@@ -279,6 +279,7 @@ CREATE TABLE IF NOT EXISTS trading_positions (
 
     -- Live market data (updated each trading cycle, ~15 min during market hours)
     underlying_price DECIMAL(12,4),   -- Current stock price for the underlying ticker
+    peak_price DECIMAL(12,4),         -- High-water mark of underlying price (Wheel runner trailing stop)
 
     status VARCHAR(20) NOT NULL DEFAULT 'open',  -- open | closed | assigned | expired
     opened_at TIMESTAMPTZ DEFAULT NOW(),
@@ -385,7 +386,13 @@ VALUES
         "call_min_strike_pct": -5.0,
         "capital_efficiency_days": 60,
         "pdt_protection": true,
-        "check_interval_minutes": 15
+        "check_interval_minutes": 15,
+        "runner_mode_enabled": true,
+        "runner_gain_pct": 20.0,
+        "delta_max_runner": 0.60,
+        "trailing_stop_enabled": true,
+        "trailing_stop_pct": 10.0,
+        "default_iv": 0.30
     }'::jsonb)
 ON CONFLICT (id) DO NOTHING;
 
@@ -410,7 +417,13 @@ SET
         "screener_max_price": 200.0,
         "screener_min_market_cap": 1000000000,
         "screener_top_n": 20,
-        "max_per_sector": 2
+        "max_per_sector": 2,
+        "runner_mode_enabled": true,
+        "runner_gain_pct": 20.0,
+        "delta_max_runner": 0.60,
+        "trailing_stop_enabled": true,
+        "trailing_stop_pct": 10.0,
+        "default_iv": 0.30
     }'::jsonb
 WHERE id = 'wheel';
 
