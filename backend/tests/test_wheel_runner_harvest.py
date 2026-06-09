@@ -232,3 +232,42 @@ async def test_trailing_stop_holds_when_above_trigger(patched_tb_and_alpaca):
         MagicMock(), _strategy(), "TMHC", pos, 88.0)
     assert sold is False
     ac.submit_stock_order.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# _get_alpaca_share_qty (covered-call pre-flight coverage helper)
+# ---------------------------------------------------------------------------
+
+
+async def test_share_qty_returns_held_equity_quantity():
+    positions = [
+        {"symbol": "TMHC", "asset_class": "us_equity", "qty": 100.0},
+        {"symbol": "PAGS", "asset_class": "us_equity", "qty": 5.0},
+        {"symbol": "TMHC260618C00072500", "asset_class": "us_option", "qty": -1.0},
+    ]
+    with patch.object(wheel_strategy.alpaca_client, "get_positions",
+                      new=AsyncMock(return_value=positions)):
+        assert await wheel_strategy._get_alpaca_share_qty("TMHC") == 100.0
+        # PAGS: the cross-strategy phantom case — Alpaca holds only 5 (< 100).
+        assert await wheel_strategy._get_alpaca_share_qty("PAGS") == 5.0
+
+
+async def test_share_qty_zero_when_not_held():
+    with patch.object(wheel_strategy.alpaca_client, "get_positions",
+                      new=AsyncMock(return_value=[])):
+        assert await wheel_strategy._get_alpaca_share_qty("PAGS") == 0.0
+
+
+async def test_share_qty_none_on_api_error():
+    # API failure → None (caller falls through, doesn't block on a transient error).
+    with patch.object(wheel_strategy.alpaca_client, "get_positions",
+                      new=AsyncMock(side_effect=RuntimeError("alpaca down"))):
+        assert await wheel_strategy._get_alpaca_share_qty("PAGS") is None
+
+
+async def test_share_qty_ignores_option_legs_of_same_root():
+    # A short option on the underlying must not be mistaken for equity shares.
+    positions = [{"symbol": "PAGS260717C00010000", "asset_class": "us_option", "qty": -1.0}]
+    with patch.object(wheel_strategy.alpaca_client, "get_positions",
+                      new=AsyncMock(return_value=positions)):
+        assert await wheel_strategy._get_alpaca_share_qty("PAGS") == 0.0

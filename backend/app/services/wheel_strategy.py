@@ -1402,6 +1402,41 @@ async def _sell_call(
         # Already have an open call — don't double-sell
         return False
 
+    # --- Pre-flight coverage check -----------------------------------------
+    # Alpaca treats a short call as "uncovered" (and rejects it with code
+    # 40310000) unless the account actually holds >= contracts*100 shares of the
+    # underlying. Because Alpaca positions are account-level while our tracking
+    # is per-strategy, our DB's "assigned" quantity can drift from reality (e.g.
+    # a cross-strategy false assignment — see _detect_assignments). Verify real
+    # coverage up front so a gap surfaces as a clear blocked_insufficient_shares
+    # log instead of a cryptic recurring Alpaca rejection, and we skip the wasted
+    # chain fetch + order submission. If we can't reach Alpaca, fall through and
+    # let the order attempt decide (don't block on a transient API error).
+    shares_needed = 100  # one contract covers 100 shares
+    held_shares = await _get_alpaca_share_qty(ticker)
+    if held_shares is not None and held_shares < shares_needed:
+        await trading_db.log_activity(
+            db, strategy_id, "blocked_insufficient_shares",
+            f"Cannot sell covered call on {ticker}: Alpaca holds {held_shares:.0f} "
+            f"share(s), need {shares_needed} to cover. Our DB shows this position as "
+            f"assigned — likely a position/Alpaca reconciliation gap (e.g. another "
+            f"strategy holding the same ticker triggered a false assignment).",
+            ticker=ticker,
+            details={
+                "ticker": ticker,
+                "alpaca_shares": held_shares,
+                "shares_needed": shares_needed,
+                "reason": (
+                    "covered call would be uncovered — Alpaca holds fewer than "
+                    f"{shares_needed} shares of {ticker} despite our 'assigned' position"
+                ),
+            },
+        )
+        _failed_ticker_cooldowns[ticker] = datetime.now(timezone.utc) + timedelta(
+            minutes=FAILED_TICKER_COOLDOWN_MINUTES
+        )
+        return False
+
     # Calculate adjusted cost basis = entry price minus total premiums per share
     adjusted_basis = await _get_adjusted_cost_basis(db, strategy_id, ticker)
     entry_price = float(stock_position.get("avg_entry_price") or 0)
@@ -1681,6 +1716,27 @@ def _is_runner(current_price: float, adjusted_basis: float, config: dict) -> boo
         return False
     runner_gain_pct = config.get("runner_gain_pct", 20.0)
     return current_price >= adjusted_basis * (1 + runner_gain_pct / 100)
+
+
+async def _get_alpaca_share_qty(ticker: str) -> float | None:
+    """Return the account's actual long share quantity for `ticker` from Alpaca,
+    or None if it couldn't be determined (API error).
+
+    Alpaca positions are account-level, so our per-strategy DB quantity can drift
+    from reality — e.g. a cross-strategy false assignment (the Simple Stock
+    strategy holding the same ticker can make the Wheel believe its put was
+    assigned). Used to verify real covered-call coverage before submitting an
+    order. Returns 0.0 if the account holds none of the ticker.
+    """
+    try:
+        positions = await alpaca_client.get_positions()
+    except Exception as e:
+        logger.warning("Could not fetch Alpaca positions for %s coverage check: %s", ticker, e)
+        return None
+    for p in positions:
+        if p.get("symbol") == ticker and p.get("asset_class", "us_equity") == "us_equity":
+            return float(p.get("qty") or 0)
+    return 0.0
 
 
 def _estimate_delta(option_type: str, S: float, K: float, dte_days: int, iv: float) -> float:
