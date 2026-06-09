@@ -1,0 +1,15 @@
+{
+  "version": "0.1.60",
+  "date": "2026-06-09",
+  "title": "v0.1.60",
+  "summary": "Release 0.1.60 includes 1 new feature.",
+  "sections": [
+    {
+      "type": "new_feature",
+      "label": "New Features",
+      "items": [
+        "Pre-flight covered-call coverage check (cross-strategy false-assignment guard)"
+      ]
+    }
+  ]
+}
