@@ -1,0 +1,16 @@
+{
+  "version": "0.1.61",
+  "date": "2026-06-09",
+  "title": "v0.1.61",
+  "summary": "Release 0.1.61 includes 2 new features.",
+  "sections": [
+    {
+      "type": "new_feature",
+      "label": "New Features",
+      "items": [
+        "Sticky top nav so the header stays visible on scroll",
+        "Interactive what-if assumptions in Buffett Rule 4 intrinsic value"
+      ]
+    }
+  ]
+}
