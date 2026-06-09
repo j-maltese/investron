@@ -1765,6 +1765,23 @@ def _estimate_delta(option_type: str, S: float, K: float, dte_days: int, iv: flo
     return abs(n_d1 - 1.0)  # |put delta|
 
 
+def _protective_sell_limit_price(reference_price: float, config: dict) -> float:
+    """Limit price for a protective stock exit: a small offset BELOW the trusted
+    (yfinance) reference price.
+
+    The Wheel's stop exits (hard stop, trailing stop, capital-efficiency) decide
+    off our independent yfinance price, but a *market* order fills at the broker's
+    quote — and Alpaca paper data for thin names can swing wildly (e.g. TMHC
+    printing $66 / $76 while the stock is actually ~$71.5), risking a fill far
+    below fair value. A limit at reference × (1 − offset) still fills in a
+    normally-falling market but refuses an absurd low print. A day order that
+    doesn't fill simply re-fires next cycle with a refreshed reference price.
+    Mirrors the Simple Stock stop-limit offset (stop_loss_limit_offset_pct).
+    """
+    offset_pct = config.get("stop_loss_limit_offset_pct", 2.0)
+    return round(reference_price * (1 - offset_pct / 100), 2)
+
+
 # ---------------------------------------------------------------------------
 # Option chain filtering and scoring
 # ---------------------------------------------------------------------------
@@ -2295,9 +2312,11 @@ async def _check_hard_stop(
     )
 
     try:
-        # Submit market sell order to get out immediately
+        # Protective limit (not market): price the exit off our trusted yfinance
+        # reference so a glitchy Alpaca quote can't fill far below fair value.
+        limit_price = _protective_sell_limit_price(current_price, config)
         order_result = await alpaca_client.submit_stock_order(
-            ticker=ticker, qty=qty, side="sell", order_type="market",
+            ticker=ticker, qty=qty, side="sell", order_type="limit", limit_price=limit_price,
         )
 
         # Record the order
@@ -2308,10 +2327,11 @@ async def _check_hard_stop(
             "ticker": ticker,
             "asset_type": "stock",
             "side": "sell",
-            "order_type": "market",
+            "order_type": "limit",
+            "limit_price": limit_price,
             "quantity": qty,
             "status": order_result.get("status", "submitted"),
-            "reason": f"Hard stop: down {drawdown_pct:.1f}% > {max_loss_pct:.0f}% max",
+            "reason": f"Hard stop: down {drawdown_pct:.1f}% > {max_loss_pct:.0f}% max (limit ${limit_price:.2f})",
         })
 
         # Close the stock position
@@ -2430,8 +2450,11 @@ async def _check_trailing_stop(
     )
 
     try:
+        # Protective limit (not market): price the exit off our trusted yfinance
+        # reference so a glitchy Alpaca quote can't fill far below fair value.
+        limit_price = _protective_sell_limit_price(current_price, config)
         order_result = await alpaca_client.submit_stock_order(
-            ticker=ticker, qty=qty, side="sell", order_type="market",
+            ticker=ticker, qty=qty, side="sell", order_type="limit", limit_price=limit_price,
         )
         await trading_db.insert_order(db, {
             "strategy_id": strategy_id,
@@ -2440,10 +2463,11 @@ async def _check_trailing_stop(
             "ticker": ticker,
             "asset_type": "stock",
             "side": "sell",
-            "order_type": "market",
+            "order_type": "limit",
+            "limit_price": limit_price,
             "quantity": qty,
             "status": order_result.get("status", "submitted"),
-            "reason": f"Trailing stop: fell {drop_from_peak:.1f}% from peak ${peak:.2f}",
+            "reason": f"Trailing stop: fell {drop_from_peak:.1f}% from peak ${peak:.2f} (limit ${limit_price:.2f})",
         })
         await trading_db.close_position(
             db, stock_position["id"], "trailing_stop", round(realized_pnl, 2),
@@ -2549,8 +2573,12 @@ async def _check_capital_efficiency(
         )
 
         try:
+            # Protective limit (not market): price the exit off our trusted
+            # yfinance reference so a glitchy Alpaca quote can't fill far below
+            # fair value.
+            limit_price = _protective_sell_limit_price(current_price, config)
             order_result = await alpaca_client.submit_stock_order(
-                ticker=ticker, qty=qty, side="sell", order_type="market",
+                ticker=ticker, qty=qty, side="sell", order_type="limit", limit_price=limit_price,
             )
 
             await trading_db.insert_order(db, {
@@ -2560,10 +2588,11 @@ async def _check_capital_efficiency(
                 "ticker": ticker,
                 "asset_type": "stock",
                 "side": "sell",
-                "order_type": "market",
+                "order_type": "limit",
+                "limit_price": limit_price,
                 "quantity": qty,
                 "status": order_result.get("status", "submitted"),
-                "reason": f"Capital efficiency: held {days_held} days, down {abs_loss:.1f}%",
+                "reason": f"Capital efficiency: held {days_held} days, down {abs_loss:.1f}% (limit ${limit_price:.2f})",
             })
 
             adjusted_basis = await _get_adjusted_cost_basis(db, strategy_id, ticker)
