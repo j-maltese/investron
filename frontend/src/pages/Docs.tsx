@@ -878,6 +878,13 @@ function WheelGuide() {
             has roughly a 20% chance of being assigned. Investron targets delta 0.15-0.30 — a sweet spot between
             reasonable premium and manageable assignment risk.
           </p>
+          <p className="mt-2">
+            When real greeks aren't available from the data feed, Investron estimates delta with a Black-Scholes
+            model (using the contract's implied volatility, or a default) rather than a crude moneyness ratio — so
+            the delta filter stays accurate. Note that 0.15-0.30 is the <em>default</em> band: for a position that
+            has run far above its cost basis (see <strong>Runner harvest &amp; trailing stops</strong>), the
+            call-writing ceiling is temporarily raised so the strategy can still write a sensible call.
+          </p>
         </SubSection>
         <SubSection title="DTE (Days to Expiration)">
           <p>
@@ -918,6 +925,7 @@ function WheelGuide() {
           <p>Before selling a call, the strategy runs defensive checks (in order):</p>
           <ol className="list-decimal pl-5 space-y-1">
             <li><strong>Hard stop check</strong> — If the stock has dropped more than 25% from entry, sell immediately (see "Hard Stops" below).</li>
+            <li><strong>Trailing stop check</strong> — If the stock is a "runner" (well above basis) and has pulled back from its peak, sell to lock in the gain (see "Runner harvest &amp; trailing stops" below).</li>
             <li><strong>Capital efficiency check</strong> — If the stock has been held more than 60 days with no recovery, consider exiting (see "Capital Efficiency" below).</li>
             <li><strong>Sell a covered call</strong> — Same option selection logic as puts, but for calls. The minimum strike is based on the <em>adjusted cost basis</em> (see below), not the raw entry price.</li>
           </ol>
@@ -1000,6 +1008,37 @@ Break-even is $20.10, not $22.00`}
             Wheel can generate income again. Discipline over hope.
           </p>
         </SubSection>
+        <SubSection title="Runner harvest & trailing stops">
+          <p>
+            Occasionally an assigned stock <em>runs</em> far above your cost basis. That creates a problem the
+            standard Wheel can't otherwise handle: the profitable call strikes sit above the normal 0.15-0.30 delta
+            band, so no call gets written — and the unrealized gain has no downside protection (the 25% hard stop is
+            far below your entry, so a full round-trip of the gain triggers nothing). Investron handles this rare case
+            two ways, both gated to <strong>"runner"</strong> positions — a stock trading at least{' '}
+            <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">runner_gain_pct</code> (default 20%) above
+            its adjusted cost basis:
+          </p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>Runner-mode call writing</strong> — If no call passes the standard delta band, the strategy
+              retries with a raised ceiling (<code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">delta_max_runner</code>,
+              default 0.60) and only considers strikes <em>at or above the current price</em>. This lets it write a
+              near-the-money call and harvest the gain through a profitable called-away exit. It is strictly a
+              fallback — the normal band is always tried first, so normal positions are untouched. Logged as{' '}
+              <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">runner_mode</code>.</li>
+            <li><strong>Trailing stop</strong> — The backstop for when no call can be written at all (illiquid chain, or
+              the broker blocks the option order). It tracks the position's highest price (a high-water mark) and sells
+              if the price falls <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">trailing_stop_pct</code>{' '}
+              (default 10%) below that peak. The peak ratchets up as the stock climbs, locking in progressively more gain.
+              Checked every ~60s cycle. Logged as{' '}
+              <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">trailing_stop</code>.</li>
+          </ul>
+          <p>
+            Both behaviors are individually disablable
+            (<code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">runner_mode_enabled</code>,{' '}
+            <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">trailing_stop_enabled</code>) and only ever
+            apply to genuine runners — the everyday Wheel is unchanged.
+          </p>
+        </SubSection>
         <SubSection title="PDT (Pattern Day Trader) protection">
           <p>
             Accounts under $25,000 are limited to 3 day trades per rolling 5 business days. A day trade is
@@ -1022,6 +1061,8 @@ Break-even is $20.10, not $22.00`}
             <li><strong>roll_executed</strong> — A put was rolled to a new strike/date. Shows old and new symbols, net credit.</li>
             <li><strong>hard_stop</strong> — Stock was sold due to exceeding the loss threshold. Full P&L breakdown including premiums collected.</li>
             <li><strong>capital_efficiency_exit</strong> — Stock was sold or call strategy adjusted after extended hold with no recovery.</li>
+            <li><strong>runner_mode</strong> — A position ran far above basis with no standard call available, so the strategy relaxed the delta ceiling to write a near-the-money call. Details include gain over basis and the relaxed parameters.</li>
+            <li><strong>trailing_stop</strong> — A runner pulled back from its peak and was sold to lock in the gain. Details include peak price, drop from peak, and realized P&amp;L.</li>
           </ul>
         </SubSection>
         <SubSection title="Executions (what happened)">
@@ -1085,11 +1126,17 @@ Break-even is $20.10, not $22.00`}
             <li><strong>yield_min / yield_max</strong> (4%-100%) — Annualized premium yield range. Filters out options with too little or suspiciously high yield.</li>
             <li><strong>expiration_min_days / expiration_max_days</strong> (7-45) — DTE window. Shorter = faster time decay (good for sellers), longer = more premium.</li>
             <li><strong>open_interest_min</strong> (100) — Minimum open interest. Ensures enough liquidity for reasonable fills.</li>
+            <li><strong>delta_max_runner</strong> (0.60) — Raised delta ceiling used <em>only</em> in runner mode (a deeply appreciated position with no standard call available), so the strategy can write a near-the-money call to harvest the gain.</li>
+            <li><strong>default_iv</strong> (0.30) — Fallback implied volatility for the Black-Scholes delta estimate, used only when the data feed omits greeks.</li>
           </ul>
         </SubSection>
         <SubSection title="Defensive parameters">
           <ul className="list-disc pl-5 space-y-1">
             <li><strong>max_stock_loss_pct</strong> (25%) — Hard stop threshold. Increase to tolerate more pain; decrease for tighter risk management.</li>
+            <li><strong>runner_mode_enabled</strong> (true) — Master toggle for runner-mode call writing (relaxed delta ceiling on deeply appreciated positions).</li>
+            <li><strong>runner_gain_pct</strong> (20%) — How far above adjusted cost basis a position must trade to count as a "runner." Gates both runner-mode call writing and the trailing stop.</li>
+            <li><strong>trailing_stop_enabled</strong> (true) — Master toggle for the runner trailing stop.</li>
+            <li><strong>trailing_stop_pct</strong> (10%) — How far the price may fall from its peak before the trailing stop sells. Applies to runners only.</li>
             <li><strong>roll_threshold_pct</strong> (10%) — How deep ITM a put must be before the strategy attempts to roll. Lower = more aggressive rolling.</li>
             <li><strong>roll_min_net_credit</strong> ($0.10) — Minimum net credit required to execute a roll. Prevents rolling at a loss.</li>
             <li><strong>call_min_strike_pct</strong> (-5%) — How far below adjusted cost basis a call strike can be. More negative = more aggressive (risk selling at a loss, but frees capital faster).</li>
@@ -1106,6 +1153,20 @@ Break-even is $20.10, not $22.00`}
             sells covered calls to collect premium, which reduces your effective cost basis. If the stock is
             down but recovering, the Wheel naturally works through it. If it keeps dropping, the hard stop fires
             and the strategy moves on.
+          </p>
+        </SubSection>
+        <SubSection title="What happens when a stock runs far above where I was assigned?">
+          <p>
+            This is "runner" territory. Normally the Wheel writes a covered call to collect premium and cap the
+            position, but when a stock has climbed well past your cost basis the sensible call strikes fall outside
+            the standard delta band, so nothing gets written — and the gain sits exposed (the 25% hard stop is far
+            below your entry). Investron detects this (a position trading 20%+ above adjusted basis) and responds two
+            ways: (1) it retries call selection with a raised delta ceiling and only at-or-above-market strikes, so it
+            can write a near-the-money call and exit at a profit if called away; and (2) it runs a trailing stop that
+            sells if the stock falls 10% from its peak — protecting the gain even when no call can be written. Both are
+            logged (<code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">runner_mode</code>,{' '}
+            <code className="text-xs bg-[var(--muted)] px-1 py-0.5 rounded">trailing_stop</code>) and apply only to
+            these rare big winners.
           </p>
         </SubSection>
         <SubSection title="How does the Wheel choose which stocks to trade?">
