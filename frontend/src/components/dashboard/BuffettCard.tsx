@@ -310,6 +310,62 @@ function computeIV(
   }
 }
 
+/** Editable Rule-4 assumption row: a labeled numeric input pre-filled with the
+ *  data-driven baseline, showing a "custom" badge + reset button once overridden.
+ *  Powers the interactive what-if intrinsic value sensitivity. `baseline` and the
+ *  input `value` are in the SAME display units (e.g. percent, dollars). */
+function AssumptionInput({
+  label, tooltip, value, onChange, baseline, subtext, prefix, suffix, step = '0.1',
+}: {
+  label: string
+  tooltip: string
+  value: string
+  onChange: (v: string) => void
+  baseline: number
+  subtext?: string
+  prefix?: string
+  suffix?: string
+  step?: string
+}) {
+  // Tolerance ~half a display step, so re-displaying the rounded baseline isn't
+  // mistaken for a custom override.
+  const isCustom = Math.abs(parseFloat(value) - baseline) > 0.005
+  return (
+    <div className="flex items-center justify-between py-1.5">
+      <div className="flex flex-col">
+        <span className="text-xs text-[var(--muted-foreground)] flex items-center gap-0 shrink-0">
+          {label}
+          <MetricTooltip text={tooltip} />
+        </span>
+        {subtext && <span className="text-[10px] text-[var(--muted-foreground)] font-mono">{subtext}</span>}
+      </div>
+      <div className="flex items-center gap-1.5">
+        {isCustom && <span className="text-[10px] text-amber-400 font-medium">custom</span>}
+        <div className="flex items-center gap-1">
+          {prefix && <span className="text-xs text-[var(--muted-foreground)]">{prefix}</span>}
+          <input
+            type="number"
+            value={value}
+            onChange={e => onChange(e.target.value)}
+            step={step}
+            className="input w-20 text-xs text-right font-mono py-0.5 px-1.5"
+          />
+          {suffix && <span className="text-xs text-[var(--muted-foreground)]">{suffix}</span>}
+        </div>
+        {isCustom && (
+          <button
+            onClick={() => onChange(baseline.toFixed(2))}
+            className="p-0.5 hover:text-[var(--accent)] text-[var(--muted-foreground)] transition-colors"
+            title="Reset to computed value"
+          >
+            <RefreshCw className="w-3 h-3" />
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ============================================================================
 // ============================================================================
 // Rule 4 Alternative — Earnings Power Analysis
@@ -466,27 +522,51 @@ function Rule4AltSection({ rule4, rule4alt }: { rule4: BuffettRule4; rule4alt: B
 // ============================================================================
 
 function Rule4Section({ rule4 }: { rule4: BuffettRule4 }) {
+  // Interactive what-if sensitivity: each assumption is pre-filled with the
+  // data-driven baseline (BV growth from EDGAR history, dividend from yfinance,
+  // the live 10Y Treasury) and can be overridden to model different scenarios.
+  // IV recomputes live, entirely client-side, via computeIV(). Years stays at
+  // 10 to match the 10Y Treasury discount horizon; Current BV is the balance-
+  // sheet anchor, so the editable levers are growth, dividend, and the rate.
+  const [growthInput, setGrowthInput] = useState<string>(
+    rule4.bv_growth_rate != null ? (rule4.bv_growth_rate * 100).toFixed(2) : '',
+  )
+  const [divInput, setDivInput] = useState<string>(
+    rule4.annual_dividend != null ? rule4.annual_dividend.toFixed(2) : '',
+  )
   const [rateInput, setRateInput] = useState<string>(
     rule4.treasury_rate != null ? (rule4.treasury_rate * 100).toFixed(2) : '',
   )
+
+  // Parse each input back into the units computeIV expects (decimals for rates),
+  // falling back to the baseline when the field is blank/invalid.
+  const overrideGrowth = useMemo(() => {
+    const p = parseFloat(growthInput)
+    return isNaN(p) ? rule4.bv_growth_rate : p / 100
+  }, [growthInput, rule4.bv_growth_rate])
+
+  const overrideDiv = useMemo(() => {
+    const p = parseFloat(divInput)
+    return isNaN(p) ? rule4.annual_dividend : p
+  }, [divInput, rule4.annual_dividend])
 
   const overrideRate = useMemo(() => {
     const parsed = parseFloat(rateInput)
     return isNaN(parsed) ? rule4.treasury_rate : parsed / 100
   }, [rateInput, rule4.treasury_rate])
 
-  // Recompute IV with potentially overridden rate
+  // Recompute IV with the (possibly overridden) assumptions.
   const computed = useMemo(() => {
     if (
       rule4.current_bv != null &&
-      rule4.bv_growth_rate != null &&
-      rule4.annual_dividend != null &&
+      overrideGrowth != null &&
+      overrideDiv != null &&
       overrideRate != null
     ) {
-      return computeIV(rule4.current_bv, rule4.bv_growth_rate, rule4.annual_dividend, overrideRate)
+      return computeIV(rule4.current_bv, overrideGrowth, overrideDiv, overrideRate)
     }
     return null
-  }, [rule4.current_bv, rule4.bv_growth_rate, rule4.annual_dividend, overrideRate])
+  }, [rule4.current_bv, overrideGrowth, overrideDiv, overrideRate])
 
   const iv = computed?.iv ?? rule4.intrinsic_value
   const pvOfBV = computed?.pvOfBV ?? rule4.pv_of_bv
@@ -499,7 +579,9 @@ function Rule4Section({ rule4 }: { rule4: BuffettRule4 }) {
 
   const ivStatus: PassFail = mos == null ? 'na' : mos >= 0 ? 'pass' : 'fail'
 
-  const isCustomRate = Math.abs((parseFloat(rateInput) / 100) - (rule4.treasury_rate ?? 0)) > 0.0001
+  // Surface the high-growth caveat against the *effective* growth rate, so it
+  // also appears if the user dials growth above 20% (not just the data baseline).
+  const showHighGrowth = overrideGrowth != null && overrideGrowth > 0.20
 
   return (
     <div className="space-y-1.5">
@@ -512,58 +594,43 @@ function Rule4Section({ rule4 }: { rule4: BuffettRule4 }) {
         </div>
       )}
 
-      {rule4.high_growth_warning && (
+      {showHighGrowth && (
         <div className="flex items-start gap-2 p-2 rounded bg-blue-500/10 text-xs text-blue-400">
           <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
           <span>BV growth rate &gt;20%/yr — stability assumption may not hold for high-growth companies. IV may be overstated.</span>
         </div>
       )}
 
-      <MetricRow
+      {/* Editable assumptions — pre-filled from real data; override to run what-ifs. */}
+      <AssumptionInput
         label="BV Growth Rate / yr"
-        tooltip={`Annualized book value growth: (Current BV ÷ Oldest BV)^(1 ÷ Years) − 1. This rate is used to project where book value will be in 10 years. The longer the history, the more reliable the estimate. Based on ${rule4.years_between ?? '?'} years of EDGAR balance sheet history.`}
-        value={rule4.bv_growth_rate != null ? fmtPct(rule4.bv_growth_rate) : 'N/A'}
+        tooltip={`Annualized book value growth: (Current BV ÷ Oldest BV)^(1 ÷ Years) − 1. Projects where book value will be in 10 years. Baseline computed from ${rule4.years_between ?? '?'} years of EDGAR balance sheet history — override to model a more conservative (or aggressive) growth assumption.`}
         subtext={rule4.oldest_bv != null ? `${fmtCurrency(rule4.oldest_bv)} → ${fmtCurrency(rule4.current_bv)}` : undefined}
+        value={growthInput}
+        onChange={setGrowthInput}
+        baseline={rule4.bv_growth_rate != null ? rule4.bv_growth_rate * 100 : 0}
+        suffix="%"
       />
 
-      <MetricRow
+      <AssumptionInput
         label="Annual Dividend"
-        tooltip={`Cash paid to shareholders per share per year (${rule4.dividend_source === 'dividendRate' ? 'dividendRate from yfinance' : rule4.dividend_source === 'price × yield' ? 'computed as Current Price × Dividend Yield (dividendRate not available)' : 'no dividend — PV of dividends will be $0'}). This is the income stream you receive while holding the stock. Used in the present value of annuity calculation.`}
-        value={rule4.annual_dividend ? fmtCurrency(rule4.annual_dividend) : '$0.00'}
+        tooltip={`Cash paid to shareholders per share per year (${rule4.dividend_source === 'dividendRate' ? 'dividendRate from yfinance' : rule4.dividend_source === 'price × yield' ? 'computed as Current Price × Dividend Yield' : 'no dividend'}). The income stream you collect while holding; drives the PV-of-annuity term. Override to model a different payout.`}
         subtext={rule4.dividend_yield ? `yield: ${fmtPct(rule4.dividend_yield)}` : undefined}
+        value={divInput}
+        onChange={setDivInput}
+        baseline={rule4.annual_dividend ?? 0}
+        prefix="$"
+        step="0.01"
       />
 
-      {/* Treasury rate with override input */}
-      <div className="flex items-center justify-between py-1.5">
-        <span className="text-xs text-[var(--muted-foreground)] flex items-center gap-0 shrink-0">
-          10Y Treasury Rate
-          <MetricTooltip text="The current yield on 10-Year U.S. Treasury Notes (risk-free rate). Used as the discount rate in the intrinsic value formula — represents what your money could safely earn elsewhere. Buffett uses this as the hurdle rate. Source: yfinance ^TNX (cached 24h). You can override this value to model different rate scenarios." />
-        </span>
-        <div className="flex items-center gap-1.5">
-          {isCustomRate && <span className="text-[10px] text-amber-400 font-medium">custom</span>}
-          <div className="flex items-center gap-1">
-            <input
-              type="number"
-              value={rateInput}
-              onChange={e => setRateInput(e.target.value)}
-              step="0.1"
-              min="0.1"
-              max="20"
-              className="input w-20 text-xs text-right font-mono py-0.5 px-1.5"
-            />
-            <span className="text-xs text-[var(--muted-foreground)]">%</span>
-          </div>
-          {isCustomRate && (
-            <button
-              onClick={() => setRateInput((rule4.treasury_rate * 100).toFixed(2))}
-              className="p-0.5 hover:text-[var(--accent)] text-[var(--muted-foreground)] transition-colors"
-              title="Reset to live rate"
-            >
-              <RefreshCw className="w-3 h-3" />
-            </button>
-          )}
-        </div>
-      </div>
+      <AssumptionInput
+        label="10Y Treasury Rate"
+        tooltip="The current yield on 10-Year U.S. Treasury Notes (risk-free rate), used as the discount rate. Buffett's hurdle rate. Source: yfinance ^TNX (cached 24h). Override to model different rate scenarios."
+        value={rateInput}
+        onChange={setRateInput}
+        baseline={rule4.treasury_rate != null ? rule4.treasury_rate * 100 : 0}
+        suffix="%"
+      />
 
       {!rule4.inapplicable && iv != null && (
         <>

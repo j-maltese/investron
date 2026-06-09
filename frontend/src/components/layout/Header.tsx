@@ -9,7 +9,7 @@ export function Header() {
   const { user, signOut } = useAuth()
 
   return (
-    <header className="border-b border-[var(--border)] bg-[var(--card)]">
+    <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-[var(--card)]">
       <div className="px-8 h-14 flex items-center justify-between gap-4">
         <Link to="/" className="flex items-center gap-2 font-bold text-lg shrink-0">
           <TrendingUp className="w-5 h-5 text-[var(--accent)]" />
