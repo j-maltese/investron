@@ -6,7 +6,8 @@ dynamic SET building for updates. All functions receive an AsyncSession.
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
+from decimal import Decimal
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -533,3 +534,145 @@ async def sync_strategy_pnl(db: AsyncSession, strategy_id: str) -> None:
         total_pnl=round(total_pnl, 2),
         total_pnl_pct=round(total_pnl_pct, 4),
     )
+
+
+# ---------------------------------------------------------------------------
+# ML Feedback Loop (Phase 0) — point-in-time decision snapshots + label maturation
+#
+# Every buy/skip decision is logged with the FULL feature vector that drove it
+# (the screener_scores row), the price at decision time, and — later — the realized
+# forward return vs SPY. This turns our trading history into labeled training data
+# for the Simple Stock buy/skip model. Capturing SKIPS matters as much as buys: a
+# model that only sees what we bought can't learn what we correctly avoided.
+# ---------------------------------------------------------------------------
+
+def _json_default(obj):
+    """JSON serializer for types asyncpg/SQLAlchemy hand back that json.dumps can't.
+
+    Decimals → float (keeps them numeric for downstream pandas/ML, not strings),
+    datetimes/dates → ISO strings. Anything else falls back to str() as a safety net.
+    """
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    return str(obj)
+
+
+async def get_screener_row(db: AsyncSession, ticker: str) -> dict | None:
+    """Fetch the full screener_scores row for a ticker (the decision feature vector)."""
+    result = await db.execute(
+        text("SELECT * FROM screener_scores WHERE ticker = :t"),
+        {"t": ticker},
+    )
+    row = result.mappings().first()
+    return dict(row) if row else None
+
+
+async def log_decision(
+    db: AsyncSession,
+    strategy_id: str,
+    ticker: str,
+    action: str,
+    features: dict | None,
+    *,
+    ai_signal: dict | None = None,
+    model_prediction: dict | None = None,
+    horizon_days: int | None = None,
+    benchmark_price: float | None = None,
+) -> int | None:
+    """Record a point-in-time decision snapshot for the ML feedback loop.
+
+    ``features`` is the full screener_scores row; we derive decision_price and
+    screener_score from it so the label-maturation job can later compute the
+    forward return from a single, consistent (yfinance-sourced) anchor price.
+    Failures are swallowed (logged) — decision logging must never break trading.
+    """
+    decision_price = features.get("price") if features else None
+    screener_score = features.get("composite_score") if features else None
+    try:
+        result = await db.execute(
+            text("""
+                INSERT INTO trading_decisions (
+                    strategy_id, ticker, action, horizon_days,
+                    decision_price, benchmark_price, screener_score,
+                    features, ai_signal, model_prediction
+                ) VALUES (
+                    :strategy_id, :ticker, :action, :horizon_days,
+                    :decision_price, :benchmark_price, :screener_score,
+                    CAST(:features AS jsonb), CAST(:ai_signal AS jsonb), CAST(:model_prediction AS jsonb)
+                ) RETURNING id
+            """),
+            {
+                "strategy_id": strategy_id,
+                "ticker": ticker,
+                "action": action,
+                "horizon_days": horizon_days,
+                "decision_price": decision_price,
+                "benchmark_price": benchmark_price,
+                "screener_score": screener_score,
+                "features": json.dumps(features, default=_json_default) if features else None,
+                "ai_signal": json.dumps(ai_signal, default=_json_default) if ai_signal else None,
+                "model_prediction": json.dumps(model_prediction, default=_json_default) if model_prediction else None,
+            },
+        )
+        await db.commit()
+        return result.scalar()
+    except Exception as e:
+        logger.warning("Failed to log decision for %s (%s): %s", ticker, action, e)
+        return None
+
+
+async def get_pending_matured_decisions(
+    db: AsyncSession, horizon_days: int, limit: int = 200
+) -> list[dict]:
+    """Fetch decisions old enough to label (decided ≥ horizon_days ago, still pending)."""
+    result = await db.execute(
+        text("""
+            SELECT * FROM trading_decisions
+            WHERE label_status = 'pending'
+              AND decided_at <= NOW() - make_interval(days => :days)
+            ORDER BY decided_at ASC
+            LIMIT :limit
+        """),
+        {"days": horizon_days, "limit": limit},
+    )
+    return [dict(row) for row in result.mappings().all()]
+
+
+async def update_decision_label(
+    db: AsyncSession,
+    decision_id: int,
+    *,
+    label_status: str = "matured",
+    forward_price: float | None = None,
+    forward_return_pct: float | None = None,
+    benchmark_return_pct: float | None = None,
+    excess_return_pct: float | None = None,
+    beat_market: bool | None = None,
+) -> None:
+    """Write the realized outcome back onto a decision row (called once it matures)."""
+    await db.execute(
+        text("""
+            UPDATE trading_decisions
+            SET label_status = :label_status,
+                matured_at = :now,
+                forward_price = :forward_price,
+                forward_return_pct = :forward_return_pct,
+                benchmark_return_pct = :benchmark_return_pct,
+                excess_return_pct = :excess_return_pct,
+                beat_market = :beat_market
+            WHERE id = :id
+        """),
+        {
+            "id": decision_id,
+            "label_status": label_status,
+            "now": datetime.now(timezone.utc),
+            "forward_price": forward_price,
+            "forward_return_pct": forward_return_pct,
+            "benchmark_return_pct": benchmark_return_pct,
+            "excess_return_pct": excess_return_pct,
+            "beat_market": beat_market,
+        },
+    )
+    await db.commit()

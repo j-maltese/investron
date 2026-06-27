@@ -158,6 +158,72 @@ async def _run_migrations():
                 ON CONFLICT (ticker, user_email) DO NOTHING
             """))
 
+            # ML feedback loop (Phase 0): point-in-time decision snapshots + a daily
+            # archive of screener metrics. These are the labeled data + feature store
+            # for the Simple Stock buy/skip model. Created BEFORE the RLS block below so
+            # the dynamic loop enables RLS on them in this same migration run.
+            await db.execute(text("""
+                CREATE TABLE IF NOT EXISTS trading_decisions (
+                    id SERIAL PRIMARY KEY,
+                    strategy_id VARCHAR(30) REFERENCES trading_strategies(id),
+                    ticker VARCHAR(10) NOT NULL,
+                    decided_at TIMESTAMPTZ DEFAULT NOW(),
+                    action VARCHAR(10) NOT NULL,
+                    horizon_days INT,
+                    decision_price DECIMAL(12,4),
+                    benchmark_price DECIMAL(12,4),
+                    screener_score DECIMAL(6,2),
+                    features JSONB,
+                    ai_signal JSONB,
+                    model_prediction JSONB,
+                    label_status VARCHAR(20) DEFAULT 'pending',
+                    matured_at TIMESTAMPTZ,
+                    forward_price DECIMAL(12,4),
+                    forward_return_pct DECIMAL(10,4),
+                    benchmark_return_pct DECIMAL(10,4),
+                    excess_return_pct DECIMAL(10,4),
+                    beat_market BOOLEAN
+                )
+            """))
+            await db.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_td_strategy ON trading_decisions(strategy_id)"
+            ))
+            await db.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_td_ticker ON trading_decisions(ticker)"
+            ))
+            await db.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_td_label_status ON trading_decisions(label_status)"
+            ))
+            await db.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_td_decided ON trading_decisions(decided_at DESC)"
+            ))
+            await db.execute(text("""
+                CREATE TABLE IF NOT EXISTS screener_scores_history (
+                    id SERIAL PRIMARY KEY,
+                    ticker VARCHAR(10) NOT NULL,
+                    snapshot_date DATE NOT NULL DEFAULT CURRENT_DATE,
+                    composite_score DECIMAL(6,2),
+                    price DECIMAL(12,4),
+                    features JSONB NOT NULL,
+                    scored_at TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE(ticker, snapshot_date)
+                )
+            """))
+            await db.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_ssh_ticker_date "
+                "ON screener_scores_history(ticker, snapshot_date DESC)"
+            ))
+            await db.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_ssh_date "
+                "ON screener_scores_history(snapshot_date DESC)"
+            ))
+            # Ensure the label horizon is present on the simple_stock config (idempotent)
+            await db.execute(text(
+                "UPDATE trading_strategies "
+                "SET config = config || '{\"ml_label_horizon_days\": 30}'::jsonb "
+                "WHERE id = 'simple_stock' AND NOT (config ? 'ml_label_horizon_days')"
+            ))
+
             # Security: enable Row Level Security on every public table.
             # Supabase exposes the `public` schema through its anon-key REST API
             # (PostgREST); with RLS off, anyone holding the publishable key (it

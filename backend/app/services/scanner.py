@@ -188,6 +188,33 @@ async def _upsert_score(db, score_data: dict) -> None:
             "metrics_fetched_at": now,
         },
     )
+
+    # ML feature store (Phase 0b): also append a dated point-in-time snapshot.
+    # screener_scores only keeps the LATEST value per ticker (overwritten each scan),
+    # so without this we could never reconstruct a stock's features "as of" a past
+    # date — which is exactly what labeled ML training examples need. One row per
+    # ticker per day; the last scan of the day wins via ON CONFLICT.
+    await db.execute(
+        text("""
+            INSERT INTO screener_scores_history (
+                ticker, snapshot_date, composite_score, price, features, scored_at
+            ) VALUES (
+                :ticker, CURRENT_DATE, :composite_score, :price, CAST(:features AS jsonb), :scored_at
+            )
+            ON CONFLICT (ticker, snapshot_date) DO UPDATE SET
+                composite_score = EXCLUDED.composite_score,
+                price = EXCLUDED.price,
+                features = EXCLUDED.features,
+                scored_at = EXCLUDED.scored_at
+        """),
+        {
+            "ticker": score_data.get("ticker"),
+            "composite_score": score_data.get("composite_score"),
+            "price": score_data.get("price"),
+            "features": json.dumps(score_data, default=str),
+            "scored_at": now,
+        },
+    )
     await db.commit()
 
 
