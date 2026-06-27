@@ -569,6 +569,69 @@ async def _validate_price_for_trade(
     return None
 
 
+async def _mature_decision_labels(db: AsyncSession, config: dict) -> None:
+    """Phase 0c: attach realized forward returns to decisions whose horizon has elapsed.
+
+    This is the feedback half of the loop — it converts past buy/skip decisions into
+    LABELED training examples. For each decision older than the label horizon, compute:
+      - the ticker's return since decision time (forward_return),
+      - SPY's return over the same window (benchmark_return),
+      - the excess return (our edge over just buying the index), and
+      - beat_market = excess_return > 0  (the classification target).
+
+    Prices come from yfinance (get_quick_price) — the same source family as the
+    decision-time anchor price — so both legs of each return are comparable. A
+    decision with no usable anchor price is marked 'skipped' (never retried); a
+    transient price gap leaves it 'pending' so the next cycle retries.
+    """
+    horizon_days = config.get("ml_label_horizon_days", 30)
+    pending = await trading_db.get_pending_matured_decisions(db, horizon_days)
+    if not pending:
+        return
+
+    # Benchmark "now" fetched once and reused across all decisions this cycle.
+    bench_now = await get_quick_price("SPY")
+    matured = 0
+
+    for d in pending:
+        ticker = d["ticker"]
+        decision_price = float(d["decision_price"]) if d.get("decision_price") else None
+
+        # Without a decision-time anchor price we can never compute a return —
+        # mark 'skipped' so we don't retry it forever.
+        if not decision_price or decision_price <= 0:
+            await trading_db.update_decision_label(db, d["id"], label_status="skipped")
+            continue
+
+        forward_price = await get_quick_price(ticker)
+        if not forward_price or forward_price <= 0:
+            # Transient data gap — leave 'pending' so the next cycle retries.
+            continue
+
+        forward_return_pct = (forward_price - decision_price) / decision_price * 100
+
+        benchmark_return_pct = excess_return_pct = None
+        beat_market = None
+        bench_then = float(d["benchmark_price"]) if d.get("benchmark_price") else None
+        if bench_then and bench_then > 0 and bench_now and bench_now > 0:
+            benchmark_return_pct = (bench_now - bench_then) / bench_then * 100
+            excess_return_pct = forward_return_pct - benchmark_return_pct
+            beat_market = excess_return_pct > 0
+
+        await trading_db.update_decision_label(
+            db, d["id"],
+            forward_price=round(forward_price, 4),
+            forward_return_pct=round(forward_return_pct, 4),
+            benchmark_return_pct=round(benchmark_return_pct, 4) if benchmark_return_pct is not None else None,
+            excess_return_pct=round(excess_return_pct, 4) if excess_return_pct is not None else None,
+            beat_market=beat_market,
+        )
+        matured += 1
+
+    if matured:
+        logger.info("Matured %d decision label(s) (horizon=%dd)", matured, horizon_days)
+
+
 async def run_simple_stock_cycle(db: AsyncSession, strategy: dict) -> None:
     """Run one cycle of the simple stock strategy.
 
@@ -587,6 +650,7 @@ async def run_simple_stock_cycle(db: AsyncSession, strategy: dict) -> None:
     stop_loss_pct = config.get("stop_loss_pct", 10.0)
     take_profit_pct = config.get("take_profit_pct", 20.0)
     use_ai = config.get("use_ai_signals", True)
+    horizon_days = config.get("ml_label_horizon_days", 30)  # ML feedback loop label horizon
     capital = float(strategy["initial_capital"])
     cash = float(strategy["current_cash"])
 
@@ -594,6 +658,10 @@ async def run_simple_stock_cycle(db: AsyncSession, strategy: dict) -> None:
 
     # --- Step 1: Sync pending orders ---
     await _sync_pending_orders(db, strategy_id)
+
+    # --- Label maturation (ML feedback loop): attach realized forward returns to
+    # decisions whose horizon has elapsed. Independent of any trading this cycle. ---
+    await _mature_decision_labels(db, config)
 
     # --- Step 2: Check existing positions for sell signals ---
     open_positions = await trading_db.get_open_positions(db, strategy_id)
@@ -756,6 +824,11 @@ async def run_simple_stock_cycle(db: AsyncSession, strategy: dict) -> None:
     max_ai_calls = config.get("max_ai_calls_per_cycle", 5)
     evaluated = 0
 
+    # ML feedback loop: capture SPY's price ONCE for this cycle so every decision
+    # logged below shares the same benchmark anchor. The maturation job later compares
+    # the stock's forward return to SPY's over the same window (excess return = our edge).
+    benchmark_price = await get_quick_price("SPY")
+
     for candidate in candidates:
         if evaluated >= max_ai_calls:
             break
@@ -775,6 +848,13 @@ async def run_simple_stock_cycle(db: AsyncSession, strategy: dict) -> None:
                     f"AI passed on {ticker}: {signal.get('action')} (conf={signal.get('confidence', 0):.2f}) — {signal.get('reasoning', '')[:100]}",
                     ticker=ticker,
                     details={"signal": signal, "screener_score": score},
+                )
+                # ML feedback loop: record the SKIP with the full feature vector.
+                # Correct avoidances are as informative to the model as buys.
+                features = await trading_db.get_screener_row(db, ticker)
+                await trading_db.log_decision(
+                    db, strategy_id, ticker, "skip", features,
+                    ai_signal=signal, horizon_days=horizon_days, benchmark_price=benchmark_price,
                 )
                 continue
         else:
@@ -806,6 +886,13 @@ async def run_simple_stock_cycle(db: AsyncSession, strategy: dict) -> None:
 
         await _execute_buy(db, strategy_id, ticker, shares, current_price, signal, score, limit_price=limit_price)
         cash -= buy_amount
+
+        # ML feedback loop: record the BUY with the full feature vector that drove it.
+        features = await trading_db.get_screener_row(db, ticker)
+        await trading_db.log_decision(
+            db, strategy_id, ticker, "buy", features,
+            ai_signal=signal, horizon_days=horizon_days, benchmark_price=benchmark_price,
+        )
 
     # Sync P&L after all trades
     await trading_db.sync_strategy_pnl(db, strategy_id)

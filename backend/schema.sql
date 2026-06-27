@@ -363,7 +363,8 @@ VALUES
         "stop_loss_pct": 10.0,
         "take_profit_pct": 20.0,
         "max_ai_calls_per_cycle": 5,
-        "check_interval_minutes": 30
+        "check_interval_minutes": 30,
+        "ml_label_horizon_days": 30
     }'::jsonb),
     ('wheel', 'The Wheel Strategy', 'wheel', 30000.00, 30000.00, '{
         "screener_enabled": true,
@@ -472,6 +473,65 @@ SELECT ticker, user_email, notes, added_at
 FROM watchlist_items
 WHERE notes IS NOT NULL AND notes != ''
 ON CONFLICT (ticker, user_email) DO NOTHING;
+
+-- ML feedback loop: ensure the label horizon is present on the simple_stock config
+-- for existing deployments (idempotent — only adds the key if missing).
+UPDATE trading_strategies
+SET config = config || '{"ml_label_horizon_days": 30}'::jsonb
+WHERE id = 'simple_stock' AND NOT (config ? 'ml_label_horizon_days');
+
+-- ML feedback loop: point-in-time snapshot of every trade DECISION (buy or skip),
+-- with the full feature vector that drove it. Outcomes (forward returns) are filled
+-- in later by the label-maturation job once the horizon elapses. This is the labeled
+-- training/validation data for the Simple Stock buy/skip model. Capturing SKIPS is
+-- essential: a model that only sees what we bought never learns what we correctly avoided.
+CREATE TABLE IF NOT EXISTS trading_decisions (
+    id SERIAL PRIMARY KEY,
+    strategy_id VARCHAR(30) REFERENCES trading_strategies(id),
+    ticker VARCHAR(10) NOT NULL,
+    decided_at TIMESTAMPTZ DEFAULT NOW(),
+    action VARCHAR(10) NOT NULL,                 -- 'buy' | 'skip' | 'sell'
+    horizon_days INT,                            -- label horizon at decision time (days)
+
+    -- Inputs captured AT decision time (point-in-time; no look-ahead)
+    decision_price DECIMAL(12,4),                -- ticker price when decided (yfinance via screener)
+    benchmark_price DECIMAL(12,4),               -- SPY price when decided (for excess-return labeling)
+    screener_score DECIMAL(6,2),
+    features JSONB,                              -- full screener_scores snapshot (40+ metrics)
+    ai_signal JSONB,                            -- {action, confidence, reasoning}
+    model_prediction JSONB,                     -- ML prediction (null until Phase 3 shadow mode)
+
+    -- Outcome label (filled in by the maturation job once the horizon elapses)
+    label_status VARCHAR(20) DEFAULT 'pending',  -- pending | matured | skipped
+    matured_at TIMESTAMPTZ,
+    forward_price DECIMAL(12,4),
+    forward_return_pct DECIMAL(10,4),
+    benchmark_return_pct DECIMAL(10,4),
+    excess_return_pct DECIMAL(10,4),             -- forward_return - benchmark_return
+    beat_market BOOLEAN                           -- excess_return > 0 (the classification target)
+);
+CREATE INDEX IF NOT EXISTS idx_td_strategy ON trading_decisions(strategy_id);
+CREATE INDEX IF NOT EXISTS idx_td_ticker ON trading_decisions(ticker);
+CREATE INDEX IF NOT EXISTS idx_td_label_status ON trading_decisions(label_status);
+CREATE INDEX IF NOT EXISTS idx_td_decided ON trading_decisions(decided_at DESC);
+
+-- ML feature store: daily point-in-time archive of screener metrics. screener_scores
+-- holds only the latest value per ticker (overwritten each scan); this table keeps a
+-- dated snapshot so we can reconstruct "what did this stock's features look like on
+-- date X" — essential for building labeled training examples without look-ahead bias.
+-- One row per ticker per day (last scan of the day wins via the unique constraint).
+CREATE TABLE IF NOT EXISTS screener_scores_history (
+    id SERIAL PRIMARY KEY,
+    ticker VARCHAR(10) NOT NULL,
+    snapshot_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    composite_score DECIMAL(6,2),
+    price DECIMAL(12,4),
+    features JSONB NOT NULL,                      -- full score_data snapshot (raw + derived metrics)
+    scored_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(ticker, snapshot_date)
+);
+CREATE INDEX IF NOT EXISTS idx_ssh_ticker_date ON screener_scores_history(ticker, snapshot_date DESC);
+CREATE INDEX IF NOT EXISTS idx_ssh_date ON screener_scores_history(snapshot_date DESC);
 
 -- Security: enable Row Level Security on every public table.
 -- Supabase exposes the `public` schema via its anon-key REST API (PostgREST);
