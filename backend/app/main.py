@@ -158,6 +158,27 @@ async def _run_migrations():
                 ON CONFLICT (ticker, user_email) DO NOTHING
             """))
 
+            # Security: enable Row Level Security on every public table.
+            # Supabase exposes the `public` schema through its anon-key REST API
+            # (PostgREST); with RLS off, anyone holding the publishable key (it
+            # ships in the frontend bundle) could read/write our tables directly,
+            # bypassing the backend. We never use that Data API — the frontend
+            # uses Supabase only for auth and routes all data through this backend
+            # (which connects as the `postgres` role and BYPASSES RLS, so it's
+            # unaffected). Enabling RLS with no policies = deny-all to the API.
+            # Dynamic loop so current and future tables are always covered;
+            # idempotent (re-enabling is a no-op).
+            await db.execute(text("""
+                DO $$
+                DECLARE t record;
+                BEGIN
+                    FOR t IN SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+                    LOOP
+                        EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t.tablename);
+                    END LOOP;
+                END $$
+            """))
+
             await db.commit()
         logger.info("Schema migrations applied successfully")
     except Exception as e:

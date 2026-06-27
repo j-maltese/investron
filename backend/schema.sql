@@ -472,3 +472,20 @@ SELECT ticker, user_email, notes, added_at
 FROM watchlist_items
 WHERE notes IS NOT NULL AND notes != ''
 ON CONFLICT (ticker, user_email) DO NOTHING;
+
+-- Security: enable Row Level Security on every public table.
+-- Supabase exposes the `public` schema via its anon-key REST API (PostgREST);
+-- with RLS off, anyone holding the publishable key (shipped in the frontend
+-- bundle) could read/write our tables directly, bypassing the backend. We never
+-- use that Data API — the frontend uses Supabase only for auth and routes all
+-- data through the FastAPI backend, which connects as the `postgres` role and
+-- BYPASSES RLS, so it's unaffected. Enabling RLS with no policies = deny-all to
+-- the API. Mirrored in _run_migrations() in main.py for existing databases.
+DO $$
+DECLARE t record;
+BEGIN
+    FOR t IN SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+    LOOP
+        EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t.tablename);
+    END LOOP;
+END $$;
