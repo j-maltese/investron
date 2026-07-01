@@ -1,0 +1,15 @@
+{
+  "version": "0.1.65",
+  "date": "2026-07-01",
+  "title": "v0.1.65",
+  "summary": "Release 0.1.65 includes 1 new feature.",
+  "sections": [
+    {
+      "type": "new_feature",
+      "label": "New Features",
+      "items": [
+        "ML feedback loop Phase 1 \u2014 historical training-set builder + learning log"
+      ]
+    }
+  ]
+}
