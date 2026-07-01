@@ -1,0 +1,13 @@
+# Research / ML environment — SEPARATE from the backend app.
+# This code is never deployed; it runs on your machine to build datasets and train models.
+# Install into a dedicated venv:  python -m venv .venv && .venv/Scripts/activate && pip install -r requirements.txt
+pandas>=2.2          # "ME" month-end resample alias needs >=2.2
+numpy
+yfinance>=0.2.40     # free price history
+curl_cffi            # browser-impersonating session so yfinance isn't rate-limited (mirrors the backend)
+pyarrow              # Parquet read/write engine
+scikit-learn         # baselines (logistic regression), metrics, calibration
+lightgbm             # gradient-boosted trees — the main model (Phase 2)
+mlflow               # experiment tracking (the free "Databricks-lite")
+matplotlib           # plots in notebooks
+jupyter              # notebook/interactive kernel
