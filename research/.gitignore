@@ -1,0 +1,9 @@
+# Generated datasets — large, reproducible from build_dataset.py. Don't commit.
+data/
+# MLflow local tracking store (Phase 2).
+mlruns/
+# Python / notebook cruft.
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
