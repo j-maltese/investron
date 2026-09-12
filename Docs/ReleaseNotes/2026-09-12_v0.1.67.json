@@ -1,0 +1,15 @@
+{
+  "version": "0.1.67",
+  "date": "2026-09-12",
+  "title": "v0.1.67",
+  "summary": "Release 0.1.67 includes 1 bug fix.",
+  "sections": [
+    {
+      "type": "bug_fix",
+      "label": "Bug Fixes",
+      "items": [
+        "Clear stale strategy error banner on next successful cycle"
+      ]
+    }
+  ]
+}
