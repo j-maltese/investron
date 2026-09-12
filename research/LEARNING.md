@@ -20,7 +20,8 @@ It's a *living* doc: we fill in phases as we build them. Status legend: ✅ done
 |------|-------|--------|
 | 0 | Data foundation — capture labeled decisions | ✅ shipped (v0.1.64) |
 | 1 | Build the historical training set | ✅ done |
-| 2 | Train & evaluate a model | 🔨 next |
+| 2 | Train & evaluate a model | ✅ done (baseline established) |
+| 1.5 | Enrich features (value/growth/quality/pre-profit/regime) | 🔨 next |
 | 3 | Shadow-mode serving | ⬜ planned |
 | 4 | Evaluate & (maybe) promote | ⬜ planned |
 
@@ -114,32 +115,74 @@ can be attached later.*
 
 ---
 
-## Phase 2 — Train & evaluate a model 🔨 (next)
+## Phase 2 — Train & evaluate a model ✅
 
-*File: `train.py` (to be written). Placeholder — lessons filled in as we build.*
+*File: [train.py](train.py). Loads `dataset_v1.parquet`, builds up from a dumb baseline to
+LightGBM, evaluates honestly, and backtests. The headline finding: **price-only features
+carry essentially no signal** for beating the market at 3 months — which is the realistic,
+expected result and the whole reason Phase 1.5 (richer features) is next.*
 
-### Lessons (planned)
+### Lessons
 
 1. **Train/test split by TIME, never random.** Shuffling a time series leaks the future into
    training — the most common way people fool themselves. Train on older years, test on newer.
-2. **Baseline first, then complexity.** Fit a dumb logistic regression before LightGBM so you
-   *feel* the lift (or lack of it) that model complexity buys.
-3. **Loss functions** — what the model actually minimizes, and why it's not the same as the
-   metric you care about.
-4. **Overfitting & regularization** — why train accuracy ≫ test accuracy is a red flag.
-5. **Walk-forward cross-validation** — the time-series-correct way to estimate performance.
-6. **Metrics that matter here** — AUC, precision@top-decile (we only act on the top picks),
-   and why plain accuracy is weak.
-7. **Calibration** — is a predicted "70%" actually right 70% of the time? Crucial before a
-   probability drives money.
-8. **Feature importance / SHAP** — reading *which* factors the model leaned on, and watching
-   it shift across regimes.
-9. **Backtest ≠ accuracy** — turning predictions into a simulated strategy vs SPY, and the
-   traps (transaction costs, look-ahead in the backtest itself).
-10. **Experiment tracking with MLflow** — why every run's params/metrics/artifacts get logged.
+2. **Baseline first, then complexity.** Fit a majority-class floor and a logistic regression
+   before LightGBM so you *feel* the lift (or lack of it) that complexity buys.
+3. **Regularization & early stopping earn their keep.** With only ~5k train rows, LightGBM's
+   guardrails (shallow trees, subsampling, L2, early stopping) matter. Here early stopping
+   halted at **1 tree** — the model *correctly* concluded there was nothing to learn.
+4. **Overfitting tell:** strong train metric, weak walk-forward. Watch the gap.
+5. **Walk-forward cross-validation** — the time-series-honest stability check.
+6. **Metrics that matter here** — AUC (rank quality) and precision@top-decile (we only act on
+   the top slice); plain accuracy is weak on a ~50/50 label.
+7. **Calibration** — does a predicted "53%" actually happen 53% of the time?
+8. **Feature importance** — reading *which* features the model leaned on.
+9. **Backtest ≠ accuracy** — turning predictions into a simulated strategy vs SPY, ignoring
+   costs (so it's an upper bound). The humbling truth-teller.
+10. **Experiment tracking with MLflow** — every run's params/metrics/artifacts logged (optional
+    dependency; the script degrades gracefully without it).
+11. **Non-stationarity is real and visible** — train beat-rate was 52.7% but test (2023+) was
+    46.3%. The world the model trained on differed from the world it was tested on.
+
+### Results (v1 — price-only features, the baseline to beat)
+
+| model | out-of-sample AUC | precision@10% | notes |
+|------|------|------|------|
+| majority-class | 0.500 | 0.401 | the floor |
+| logistic | 0.505 | 0.450 | ~no linear signal |
+| LightGBM | 0.467 | 0.392 | stopped at 1 tree = "nothing to learn" |
+
+Walk-forward mean AUC **0.493 ± 0.031** (centered on coin-flip). Backtest (top-decile,
+quarterly, out-of-sample 2023+): **strategy ×1.47 vs SPY ×1.84 — LAGGED.**
+
+**The point:** the harness didn't lie to us. A random split would have inflated these numbers;
+the time-honest pipeline correctly reported *no edge* from price/technical features alone. That
+honest zero is the baseline every future feature family must beat.
 
 ### In the code
-*(links added when `train.py` lands)*
+
+- Load + feature/label column split → [train.py#L50](train.py#L50)
+- **Time-based split (never random)** → [train.py#L59](train.py#L59)
+- Metrics: AUC + precision@top-decile → [train.py#L76](train.py#L76)
+- Majority-class baseline (the floor) → [train.py#L101](train.py#L101)
+- Logistic regression (scaler fit on train only) → [train.py#L112](train.py#L112)
+- LightGBM with regularization + early stopping → [train.py#L126](train.py#L126)
+- Feature importance → [train.py#L155](train.py#L155)
+- Calibration table → [train.py#L166](train.py#L166)
+- Walk-forward CV → [train.py#L184](train.py#L184)
+- Backtest vs SPY (non-overlapping quarterly) → [train.py#L210](train.py#L210)
+- Persist artifact + MLflow tracking → [train.py#L241](train.py#L241)
+
+### Check yourself
+
+- Why is out-of-sample AUC of 0.467 (below 0.5) not a bug, but a sign the price features
+  don't generalize to the test years?
+- LightGBM early-stopped at 1 tree. In plain terms, what did that tell us — and why is it a
+  feature of the process working, not a failure?
+- The backtest lagged SPY. Why is reporting that honestly more valuable than tuning params
+  until it "wins"?
+- Why would a *random* train/test split have made all these numbers look better — and why
+  would that have been a lie?
 
 ---
 
