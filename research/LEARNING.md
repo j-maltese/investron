@@ -21,7 +21,8 @@ It's a *living* doc: we fill in phases as we build them. Status legend: ✅ done
 | 0 | Data foundation — capture labeled decisions | ✅ shipped (v0.1.64) |
 | 1 | Build the historical training set | ✅ done |
 | 2 | Train & evaluate a model | ✅ done (baseline established) |
-| 1.5 | Enrich features (value/growth/quality/pre-profit/regime) | 🔨 next |
+| 1.5a | Enrich features: value | ✅ done (modest lift) |
+| 1.5b | Enrich features: growth/quality/regime/pre-profit | 🔨 next |
 | 3 | Shadow-mode serving | ⬜ planned |
 | 4 | Evaluate & (maybe) promote | ⬜ planned |
 
@@ -183,6 +184,77 @@ honest zero is the baseline every future feature family must beat.
   until it "wins"?
 - Why would a *random* train/test split have made all these numbers look better — and why
   would that have been a lie?
+
+---
+
+## Phase 1.5 — Enrich features: Value ✅
+
+*Files: [edgar_pit.py](edgar_pit.py) (new), [build_dataset.py](build_dataset.py) (extended).
+Adds P/E, P/B, FCF yield, earnings yield, and Graham Number margin-of-safety — the first
+fundamental family, tested against the v1 price-only baseline from Phase 2.*
+
+### Lessons
+
+1. **A fundamental value needs its OWN look-ahead-safety logic, separate from price.** A
+   price is public the instant it prints. A fundamental (EPS, book value) is only public once
+   its filing is FILED with the SEC — usually weeks after the fiscal period it describes. Using
+   the period-end date instead of the filed date is a subtle, easy-to-miss look-ahead leak.
+2. **"Most recently filed" is the wrong rule for history, even though it's the right rule for
+   a live app.** `backend/app/services/edgar.py`'s `extract_financial_time_series()` collapses
+   each fiscal period to whichever filing was filed most recently ACROSS THE COMPANY'S ENTIRE
+   HISTORY — correct for "show today's restated numbers," wrong for "what did we know on date
+   T," because filtering that already-collapsed output by `filed <= T` can drop a period whose
+   sole survivor happens to have been filed after T. The fix: apply the `filed <= T` cutoff
+   FIRST, on the raw per-filing entries, before any cross-period collapsing.
+3. **Verify point-in-time correctness directly, not just by code review.** The cheapest test:
+   query the same field for `T-1 day` and `T+1 day` around a known filing date and confirm the
+   value only changes at the FILING boundary, never at the fiscal PERIOD-END boundary. Done for
+   AAPL's FY2019 10-K (filed 2019-10-30) before trusting the pipeline on the full universe.
+4. **A single train/test split can disagree with the walk-forward average — trust the
+   average.** The fixed 2023+ test set showed logistic/LightGBM AUC dipping slightly *below*
+   v1's numbers, while the walk-forward mean (9 yearly folds) rose from v1's 0.493 to 0.517.
+   One noisy split isn't the verdict; the multi-fold average is.
+5. **"Reuse, don't import" is sometimes the right call, not a shortcut.** `research/` is a
+   synchronous sandbox; `edgar.py` is async/httpx-based backend code. Vendoring the concept
+   tags + a deliberately different selection algorithm into `edgar_pit.py` was more honest than
+   forcing an import that would have carried backend runtime assumptions into a script that
+   should stand alone.
+
+### Results (v2 = v1's price/technical features + value)
+
+| model | out-of-sample AUC (2023+ split) | precision@10% |
+|------|------|------|
+| majority-class | 0.500 | 0.393 |
+| logistic | 0.491 | 0.444 |
+| LightGBM | 0.451 | 0.393 (still stopped at 1 tree) |
+
+Walk-forward mean AUC **0.517 ± 0.038** (v1 was 0.493 ± 0.031 — a modest, real lift, and the
+first result to average above coin-flip). Backtest (top-decile, quarterly, 2023+): **strategy
+×1.66 vs SPY ×1.92 — still lagged**, but a narrower gap than v1's ×1.47 vs ×1.84. Feature
+importance gave `fcf_yield`, `earnings_yield`, and `pb` non-zero (but tiny) split gain — LightGBM
+still found barely anything to build more than 1 tree on.
+
+**The point:** value features bought a small, real improvement in the more trustworthy
+walk-forward metric, not a breakthrough. That's exactly the expected outcome of "each family
+earns its place by measurable lift" — a nudge in the right direction, not a solved problem.
+Growth/quality/regime families (and, separately, a wider universe to actually test the
+pre-profit/dilution family) are the next candidates to test the same way.
+
+### In the code
+
+- Point-in-time selection algorithm (the core lesson) → [edgar_pit.py#L128](edgar_pit.py#L128)
+- Value ratio formulas (ported from screener.py) → [build_dataset.py#L145](build_dataset.py#L145)
+- Point-in-time fetch wired into the per-ticker loop → [build_dataset.py#L214](build_dataset.py#L214)
+
+### Check yourself
+
+- Why is "most recently filed across all history" the right rule for the live app's screener
+  but the wrong rule for building historical training features?
+- The fixed test-set AUC went down slightly while the walk-forward mean AUC went up. Which
+  number should you trust more, and why?
+- Row count dropped from ~7k (v1) to ~5.3k (v2) and 7 tickers were dropped entirely. Why is
+  that an honest consequence of the no-imputation policy rather than a bug to "fix" by filling
+  in guessed values?
 
 ---
 

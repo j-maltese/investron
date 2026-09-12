@@ -1,5 +1,5 @@
 # %% [markdown]
-# # Phase 1 — Build the historical training set
+# # Phase 1 (+ 1.5) — Build the historical training set
 #
 # Goal: turn market history into **labeled examples** for a stock buy/skip model.
 # Each example is one (ticker, month-end date T):
@@ -11,11 +11,16 @@
 # information it could not have had at time T. Every design choice below exists to
 # prevent that. Read the comments — the concepts matter more than the code.
 #
+# v2 adds a VALUE feature family (P/E, P/B, FCF yield, earnings yield, Graham Number
+# margin-of-safety) on top of v1's price/technical features, sourced from point-in-time
+# SEC EDGAR data via `edgar_pit.py` — see that module's docstring for why a fundamental
+# value needs its own look-ahead-safety logic, distinct from price/technical features.
+#
 # Run it two ways:
 #   * whole script:      python build_dataset.py
 #   * cell-by-cell:      open in VS Code, Shift+Enter on each "# %%" cell
 #
-# Output: research/data/dataset_v1.parquet
+# Output: research/data/dataset_v2.parquet
 
 # %%
 from pathlib import Path
@@ -23,6 +28,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import yfinance as yf
+
+import edgar_pit
 
 # --- Config ---------------------------------------------------------------
 # Universe = the 57 liquid large-caps from the app's seed list. Liquid names have
@@ -44,7 +51,7 @@ BENCHMARK = "SPY"           # market proxy — used only for the label, never as
 START = "2015-01-01"        # ~10 years of history
 HORIZON_MONTHS = 3          # label horizon (plan says 1-3 months; 3m is less noisy than 1m)
 BEAT_THRESHOLD = 0.0        # "beat the market" = excess forward return > this
-OUT = Path(__file__).resolve().parent / "data" / "dataset_v1.parquet"
+OUT = Path(__file__).resolve().parent / "data" / "dataset_v2.parquet"
 
 # %% [markdown]
 # ## 1. Download prices
@@ -72,16 +79,42 @@ print(f"Downloaded {close.shape[0]} daily rows x {close.shape[1]} tickers "
 
 
 # %% [markdown]
+# ## 1b. Download point-in-time fundamentals (value features)
+# One SEC EDGAR "company facts" call per ticker gets a company's ENTIRE XBRL filing
+# history in one shot (disk-cached under `data/edgar_cache/`, see `edgar_pit.py`).
+# We fetch it once here; `edgar_pit.get_point_in_time_annuals()` is then called
+# per-ticker-per-month-end later with zero extra HTTP calls, re-querying this same
+# in-memory dict each time.
+
+# %%
+cik_map = edgar_pit.lookup_all_ciks(UNIVERSE)
+print(f"Resolved {len(cik_map)}/{len(UNIVERSE)} tickers to a CIK")
+
+facts_cache = {}
+for tkr in UNIVERSE:
+    cik = cik_map.get(tkr)
+    if not cik:
+        continue
+    facts = edgar_pit.fetch_company_facts(cik)
+    if facts is not None:
+        facts_cache[tkr] = facts
+print(f"Fetched EDGAR company facts for {len(facts_cache)}/{len(UNIVERSE)} tickers")
+
+
+# %% [markdown]
 # ## 2. Feature engineering (point-in-time)
 # For each ticker we compute features from DAILY data, then sample the last value in
 # each calendar month (`resample("ME").last()`). "Last value in the month" = the
 # value as of the final trading day — so a feature dated 2020-03-31 uses only data
 # up to and including that day. Nothing from the future leaks in.
 #
-# These are all **price/technical** features (momentum, volatility, trend position).
-# Fundamentals (P/E, ROE, margin-of-safety...) come in a later iteration once we wire
-# in point-in-time EDGAR data — those need care because a fundamental value is only
-# knowable AFTER the filing date, not the period-end date.
+# Alongside these price/technical features (momentum, volatility, trend position),
+# `build_value_features()` below adds VALUE features (P/E, P/B, FCF yield, earnings
+# yield, Graham Number margin-of-safety) using `edgar_pit.get_point_in_time_annuals()`
+# — the point-in-time EDGAR puller, which only ever uses a fundamental value that had
+# actually been FILED with the SEC by that row's date (not just true as of the fiscal
+# period-end). Other fundamental families (growth, quality, regime, pre-profit) are
+# later iterations.
 
 # %%
 def build_features(daily_close: pd.Series) -> pd.DataFrame:
@@ -117,11 +150,48 @@ def build_features(daily_close: pd.Series) -> pd.DataFrame:
     return feat
 
 
+def build_value_features(feat: pd.DataFrame, facts: dict | None) -> pd.DataFrame:
+    """Point-in-time value ratios (P/E, P/B, FCF yield, earnings yield, Graham Number
+    margin-of-safety), one row per date in `feat.index`. Formulas ported from
+    backend/app/services/screener.py; the difference here is that EPS/book-value/FCF
+    come from `edgar_pit.get_point_in_time_annuals()` (as-of-filing-date EDGAR data)
+    instead of yfinance's current-snapshot-only multiples, so they're valid history."""
+    cols = ["pe", "pb", "fcf_yield", "earnings_yield", "margin_of_safety"]
+    if facts is None:
+        return pd.DataFrame(np.nan, index=feat.index, columns=cols)
+
+    rows = []
+    for dt, price in feat["price"].items():
+        pit = edgar_pit.get_point_in_time_annuals(facts, dt.date())
+        eps = pit["eps_basic"] or (
+            pit["net_income"] / pit["shares"] if pit["net_income"] and pit["shares"] else None
+        )
+        bvps = pit["equity"] / pit["shares"] if pit["equity"] and pit["shares"] else None
+        fcf_ps = (
+            (pit["ocf"] - pit["capex"]) / pit["shares"]
+            if pit["ocf"] is not None and pit["capex"] is not None and pit["shares"]
+            else None
+        )
+
+        pe = price / eps if eps and eps > 0 else None
+        pb = price / bvps if bvps and bvps > 0 else None
+        fcf_yield = fcf_ps / price if fcf_ps is not None and price else None
+        earnings_yield = 1 / pe if pe else None
+        graham_number = np.sqrt(22.5 * eps * bvps) if eps and eps > 0 and bvps and bvps > 0 else None
+        margin_of_safety = (graham_number - price) / price * 100 if graham_number is not None else None
+
+        rows.append([pe, pb, fcf_yield, earnings_yield, margin_of_safety])
+
+    return pd.DataFrame(rows, index=feat.index, columns=cols)
+
+
 FEATURE_COLS = [
     "ret_1m", "ret_3m", "ret_6m", "ret_12m",
     "vol_3m", "vol_6m",
     "px_vs_sma50", "px_vs_sma200", "dist_52w_high", "dist_52w_low",
 ]
+VALUE_FEATURE_COLS = ["pe", "pb", "fcf_yield", "earnings_yield", "margin_of_safety"]
+FEATURE_COLS = FEATURE_COLS + VALUE_FEATURE_COLS
 
 # %% [markdown]
 # ## 3. Labels (strictly future)
@@ -146,6 +216,7 @@ for tkr in UNIVERSE:
         print(f"  skip {tkr}: no price data")
         continue
     feat = build_features(close[tkr])
+    feat[VALUE_FEATURE_COLS] = build_value_features(feat, facts_cache.get(tkr))
     m = close[tkr].resample("ME").last()
 
     feat["ticker"] = tkr
@@ -169,6 +240,10 @@ df = pd.concat(rows, ignore_index=True)
 #     maturation job will fill in later; here they can't be training data.
 
 # %%
+print("null rate per value feature BEFORE dropping (coverage gaps -- EDGAR history")
+print("starting later than 2015 for some tickers, or a failed CIK lookup):")
+print(df[VALUE_FEATURE_COLS].isna().mean().round(4).to_string())
+
 before = len(df)
 df = df.dropna(subset=FEATURE_COLS)                 # need full feature history
 df = df.dropna(subset=["excess_ret"])               # need a matured label
@@ -186,7 +261,7 @@ print(f"Rows: {before} -> {len(df)} after dropping incomplete history / unmature
 
 # %%
 h = HORIZON_MONTHS
-print("\n=== dataset_v1 ===")
+print("\n=== dataset_v2 ===")
 print(f"shape                : {df.shape}")
 print(f"date range           : {df['date'].min().date()} -> {df['date'].max().date()}")
 print(f"tickers              : {df['ticker'].nunique()}")
@@ -206,10 +281,12 @@ print(f"\nSaved -> {OUT}")
 # %% [markdown]
 # ## What you just built
 # A leak-free supervised dataset: ~10 years x 57 stocks, one row per stock per month,
-# 10 point-in-time features, and a binary "beat the market over the next 3 months" label.
+# 15 point-in-time features (10 price/technical + 5 value), and a binary "beat the
+# market over the next 3 months" label. The value features are as look-ahead-safe as
+# the price ones: each is computed from the most recent SEC filing that had actually
+# been FILED as of that row's date, never a later restatement.
 #
-# ## Next (Phase 2)
-# `train.py` — split by TIME (train on older years, test on newer; never random-shuffle
-# a time series or the future leaks into training). Fit a logistic-regression baseline,
-# then LightGBM, and judge them with AUC, precision@top-decile, a calibration curve, and
-# a backtest vs SPY. Every run logged to MLflow.
+# ## Next
+# Re-run `train.py` against `dataset_v2.parquet` and compare its walk-forward AUC /
+# precision@top-decile / backtest-vs-SPY against the v1 (price-only) baseline already
+# recorded in `LEARNING.md` — does value add real lift, or was price-only truly it?

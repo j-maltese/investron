@@ -34,7 +34,7 @@ from sklearn.metrics import roc_auc_score, accuracy_score
 import lightgbm as lgb
 
 HERE = Path(__file__).resolve().parent
-DATA = HERE / "data" / "dataset_v1.parquet"
+DATA = HERE / "data" / "dataset_v2.parquet"
 MODELS = HERE / "models"
 
 TARGET = "beat_market"
@@ -246,7 +246,7 @@ print(f"  strategy {'BEAT' if strat_eq > mkt_eq else 'LAGGED'} the market over t
 # %%
 MODELS.mkdir(parents=True, exist_ok=True)
 import joblib
-artifact = MODELS / "lgbm_v1.pkl"
+artifact = MODELS / "lgbm_v2.pkl"
 joblib.dump({"model": gbm, "features": FEATURES, "split_date": str(SPLIT_DATE)}, artifact)
 print(f"\nsaved model -> {artifact}")
 
@@ -254,7 +254,7 @@ try:
     import mlflow
     mlflow.set_tracking_uri(f"file:{(HERE / 'mlruns').as_posix()}")
     mlflow.set_experiment("simple_stock_beat_market")
-    with mlflow.start_run(run_name="lgbm_v1"):
+    with mlflow.start_run(run_name="lgbm_v2"):
         mlflow.log_params({
             "features": len(FEATURES), "split_date": str(SPLIT_DATE.date()),
             "n_estimators": gbm.best_iteration_, "learning_rate": 0.02,
