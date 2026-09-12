@@ -2,6 +2,9 @@
 data/
 # MLflow local tracking store (Phase 2).
 mlruns/
+# Trained model artifacts — reproducible from train.py; the chosen one gets copied
+# into the backend deliberately in Phase 3.
+models/
 # Python / notebook cruft.
 .venv/
 __pycache__/
