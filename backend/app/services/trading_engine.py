@@ -137,10 +137,14 @@ async def run_trading_cycle() -> None:
                     from app.services.wheel_strategy import run_wheel_cycle
                     await run_wheel_cycle(db, strategy)
 
-                # Update last_run timestamp
+                # Update last_run timestamp and clear any stale error from a prior
+                # cycle — otherwise a one-off transient failure (e.g. a dropped DB
+                # connection) leaves a permanent error banner on a healthy strategy.
                 await trading_db.update_strategy(
                     db, strategy_id,
                     last_run_at=datetime.now(timezone.utc),
+                    last_error=None,
+                    error_count=0,
                 )
 
         except Exception as e:
